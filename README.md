@@ -17,7 +17,7 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Alert/evidence correlation | Implemented | `/api/v1/alerts/{id}/evidence` |
 | HMAC-linked local audit and integrity checking | Implemented with documented limitations | `backend/sentinel/audit.py` |
 | Authenticated read-only APIs | Implemented | `/api/v1/overview`, `/alerts`, `/events` |
-| Premium operator dashboard | Source provided; frontend build **not locally verified** | `frontend/app` |
+| Premium operator dashboard | Implemented source; GitHub CI typecheck and production build passed (local npm build not verified) | `frontend/app` |
 | Live Wazuh/Suricata/endpoint adapters | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
@@ -100,7 +100,7 @@ python -m pip install -e '.[test]'
 python -m pytest -q
 ```
 
-Tests use isolated temporary SQLite databases and random event nonces. They require no cloud credentials. CI runs backend tests and attempts frontend type checks and build separately.
+Tests use isolated temporary SQLite databases and random event nonces. They require no cloud credentials. GitHub CI runs backend tests, frontend type checks and a production build. The initial run passed for both jobs on commit `1b21a599`.
 
 ## Operator API (localhost only)
 
