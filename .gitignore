@@ -1,0 +1,22 @@
+# Secrets and local runtime
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite*
+*.db-journal
+*.db-wal
+*.db-shm
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+.uv/
+node_modules/
+.next/
+out/
+*.tsbuildinfo
+.DS_Store
+coverage/
+htmlcov/
+*.log
