@@ -21,8 +21,8 @@ Verified backend behavior:
 - Audit-chain editing causes an integrity verification failure.
 - Restricted browser CORS origin and explicit UTC timestamp serialization verified.
 
-**Not verified:** Next.js frontend compilation, cross-browser accessibility, live browser UI, npm dependency install, production PostgreSQL behavior, CI on GitHub, deployment, actual endpoint sensor integrations, performance at scale, network intrusion detection/prevention, vulnerability exploitation testing, AI model reasoning, recovery/rollbacks.
+**Not verified:** cross-browser accessibility, live browser UI, production PostgreSQL behavior, deployment, actual endpoint sensor integrations, performance at scale, network intrusion detection/prevention, vulnerability exploitation testing, AI model reasoning, recovery/rollbacks.
 
-**Blocker:** frontend npm dependencies could not be installed; the environment could not resolve `registry.npmjs.org` (`EAI_AGAIN`). The local Next.js source requires `npm install`, `npm run typecheck`, `npm run build`, and real browser inspection when package registry access is available. No fabricated build or CI pass is claimed.
+**Local environment limit:** the original workspace could not resolve `registry.npmjs.org` (`EAI_AGAIN`); it has not run a local Next.js build or real-browser accessibility evaluation. GitHub Actions has since independently installed frontend dependencies, passed TypeScript checking and built the production frontend successfully.
 
-The test count and result are local observations only. GitHub CI is defined but has not been executed in a remote repository.
+**Remote CI evidence (2026-10-15):** [Sentinel quality gates, run #38770175539](https://github.com/teldigi5-wq/sentinel-security-platform/actions/runs/38770175539), on commit [`1b21a599`](https://github.com/teldigi5-wq/sentinel-security-platform/commit/1b21a599c3a5b376d325ca1d67bd30735495eb4b). Backend job: **success**; frontend dependency installation, TypeScript check and Next.js production compilation: **success**. This verifies the initial GitHub build only, not production security or real-world network protection.
