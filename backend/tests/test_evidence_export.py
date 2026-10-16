@@ -8,9 +8,34 @@ from sqlalchemy import create_engine, func, select
 from sqlalchemy.orm import Session
 
 from sentinel.evidence_export import export_event_evidence, verify_event_export
-from sentinel.models import AuditRecord, AlertEvidence, SecurityEvent, utcnow
+from sentinel.audit import _digest, _time_key, append_audit, event_digest, lock_audit_head, verify_chain, verify_event_evidence
+from sentinel.models import AuditHead, AuditRecord, AlertEvidence, SecurityEvent, utcnow
 from test_api import AUDIT, client_for, post_event
 
+
+
+def reseal_synthetic_fixture(session):
+    """Test-only: rebuild the signed chain for deliberately modified fixture times.
+
+    This uses a known test audit key to simulate historical signed events.
+    NEVER treat resealing production data as a supported maintenance path.
+    """
+    rows = session.scalars(select(AuditRecord).order_by(AuditRecord.id)).all()
+    events = {item.id: item for item in session.scalars(select(SecurityEvent))}
+    previous = "0" * 64
+    for row in rows:
+        if row.action == "event.ingested":
+            old_id = row.resource.split(":")[2] if row.resource.startswith("event:v1:") else row.resource
+            if old_id in events:
+                row.resource = f"event:v1:{old_id}:{event_digest(events[old_id])}"
+        row.previous_hash = previous
+        row.entry_hash = _digest(AUDIT, _time_key(row.at), row.actor, row.action, row.resource, previous)
+        previous = row.entry_hash
+    head = session.get(AuditHead, 1)
+    head.last_hash = previous
+    head.entry_count = len(rows)
+    session.flush()
+    assert verify_chain(session, AUDIT) and verify_event_evidence(session) == (True, 0)
 
 def seeded(tmp_path):
     client, settings = client_for(tmp_path)
@@ -22,6 +47,7 @@ def seeded(tmp_path):
     with Session(engine) as session:
         event = session.scalar(select(SecurityEvent))
         event.received_at = utcnow() - timedelta(days=40)
+        reseal_synthetic_fixture(session)
         session.commit()
     engine.dispose()
     return source, settings.database_url
@@ -90,9 +116,13 @@ def test_bound_refuses_partial_selection(tmp_path):
     engine = create_engine(url)
     with Session(engine) as s:
         seed = s.scalar(select(SecurityEvent))
-        s.add(SecurityEvent(id='c'*36,sensor_id=seed.sensor_id,asset_id=seed.asset_id,
-                            category=seed.category,action=seed.action,source_ip=seed.source_ip,
-                            observed_at=seed.observed_at,received_at=seed.received_at))
+        synthetic = SecurityEvent(id='c'*36,sensor_id=seed.sensor_id,asset_id=seed.asset_id,
+                                  category=seed.category,action=seed.action,source_ip=seed.source_ip,
+                                  observed_at=seed.observed_at,received_at=seed.received_at)
+        s.add(synthetic)
+        s.flush()
+        append_audit(s, AUDIT, actor=f"sensor:{synthetic.sensor_id}",
+                     action="event.ingested", resource=f"event:v1:{synthetic.id}:{event_digest(synthetic)}")
         s.commit()
     engine.dispose()
     with pytest.raises(ValueError, match='exceed max_events'):
@@ -107,6 +137,7 @@ def test_fresh_events_not_exported_by_old_observed_timestamp(tmp_path):
         event=s.scalar(select(SecurityEvent))
         event.received_at=utcnow()
         event.observed_at=utcnow()-timedelta(days=90)
+        reseal_synthetic_fixture(s)
         s.commit()
     engine.dispose()
     result=export_event_evidence(source,tmp_path/'empty',AUDIT,older_than_days=30)

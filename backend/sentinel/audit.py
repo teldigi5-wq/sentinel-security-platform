@@ -1,10 +1,12 @@
 """Sequential HMAC-linked audit records. See documented single-writer limitations."""
 import hashlib
 import hmac
+import json
+import re
 from datetime import timezone
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-from .models import Alert, AlertDecision, AuditHead, AuditRecord, utcnow
+from .models import Alert, AlertDecision, AuditHead, AuditRecord, SecurityEvent, utcnow
 
 
 def _time_key(at):
@@ -64,6 +66,58 @@ def verify_chain(session: Session, key: str) -> bool:
         count += 1
     head = session.get(AuditHead, 1)
     return head is not None and head.last_hash == previous and head.entry_count == count
+
+
+# v0.22 audit resource encoding. The digest binds the normalized, persisted
+# row, not just the HTTP submission, including its server-assigned receipt time.
+EVENT_ANCHOR_PREFIX = "event:v1:"
+EVENT_ANCHOR_RE = re.compile(r"^event:v1:([0-9a-f-]{36}):([0-9a-f]{64})$")
+
+
+def event_digest(row: SecurityEvent) -> str:
+    """Stable JSON framing across SQLite/PostgreSQL UTC DateTime round trips."""
+    fields = ["sentinel-event-v1", row.id, row.sensor_id, row.asset_id,
+              row.category, row.action, row.source_ip,
+              _time_key(row.observed_at), _time_key(row.received_at)]
+    canonical = json.dumps(fields, separators=(",", ":"), ensure_ascii=True)
+    return hashlib.sha256(canonical.encode("ascii")).hexdigest()
+
+
+def verify_event_evidence(session: Session) -> tuple[bool, int]:
+    """Cross-check persisted event rows against signed audit resources.
+
+    Pre-v0.22 resources contained only the event ID. Their presence is counted
+    as legacy/unanchored, never reported as payload-verified. Missing rows,
+    duplicate records, malformed hashes, or changed v1 fields fail validation.
+    This does not prove external immutability or the original sensor's honesty.
+    """
+    events = {event.id: event for event in session.scalars(select(SecurityEvent))}
+    audited = session.scalars(select(AuditRecord).where(
+        AuditRecord.action == "event.ingested").order_by(AuditRecord.id)).all()
+    if len(events) != len(audited):
+        return False, 0
+    seen: set[str] = set()
+    legacy_count = 0
+    for record in audited:
+        match = EVENT_ANCHOR_RE.fullmatch(record.resource)
+        if match is not None:
+            event_id, claimed_digest = match.groups()
+            event = events.get(event_id)
+            if event is None or record.actor != f"sensor:{event.sensor_id}" or not hmac.compare_digest(
+                claimed_digest, event_digest(event)
+            ):
+                return False, legacy_count
+        else:
+            # Legacy IDs have no separators; never allow a malformed v1 marker
+            # to be silently downgraded to the legacy (unanchored) form.
+            event_id = record.resource
+            if ":" in event_id or event_id not in events:
+                return False, legacy_count
+            legacy_count += 1
+        if event_id in seen:
+            return False, legacy_count
+        seen.add(event_id)
+    return True, legacy_count
 
 
 def decision_digest(row: AlertDecision) -> str:

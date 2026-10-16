@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, func, select, update, event as sa_event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from .audit import append_audit, decision_digest, lock_audit_head, verify_case_decisions, verify_chain
+from .audit import append_audit, decision_digest, event_digest, lock_audit_head, verify_case_decisions, verify_chain, verify_event_evidence
 from .detection import evaluate
 from .database import verify_schema
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
@@ -249,7 +249,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.flush()
             alerts = evaluate(session, incoming)
             append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
-                         action="event.ingested", resource=incoming.id)
+                         action="event.ingested", resource=f"event:v1:{incoming.id}:{event_digest(incoming)}")
             for alert_id in alerts:
                 append_audit(session, settings.audit_key, actor="detection-engine", action="alert.created", resource=alert_id)
             session.commit()
@@ -370,8 +370,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @app.get("/api/v1/audit/integrity")
     def audit_integrity(_: Admin, session: DB):
-        return {"valid": verify_chain(session, settings.audit_key) and verify_case_decisions(session),
+        anchored_valid, legacy_count = verify_event_evidence(session)
+        return {"valid": verify_chain(session, settings.audit_key) and verify_case_decisions(session) and anchored_valid,
                 "records": session.scalar(select(func.count()).select_from(AuditRecord)) or 0,
-                "assurance": "HMAC chain and triage cross-check; not externally anchored or immutable"}
+                "event_payload_assurance": ("integrity_failed" if not anchored_valid else
+                                             "partial_legacy" if legacy_count else "anchored"),
+                "legacy_unanchored_events": legacy_count,
+                "assurance": "HMAC chain, triage and v1 event-row cross-check; legacy event payloads are unverifiable; not externally immutable"}
 
     return app

@@ -18,7 +18,7 @@ from urllib.parse import quote
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from .audit import verify_case_decisions, verify_chain
+from .audit import verify_case_decisions, verify_chain, verify_event_evidence
 from .database import HEAD_REVISION, verify_schema
 from alembic.migration import MigrationContext
 from .models import AuditHead
@@ -80,6 +80,8 @@ def _verified_snapshot(path: Path, audit_key: str, *, revision: str = HEAD_REVIS
         if revision == HEAD_REVISION:
             verify_schema(engine)
         elif revision == "0002_audit_head":
+            # Support recovery of previously authenticated v0.6 backups.
+            # An offline migration is mandatory before API startup.
             with engine.connect() as connection:
                 observed_revision = MigrationContext.configure(connection).get_current_revision()
             if observed_revision != revision:
@@ -87,7 +89,10 @@ def _verified_snapshot(path: Path, audit_key: str, *, revision: str = HEAD_REVIS
         else:
             raise ValueError("Unsupported snapshot database revision")
         with Session(engine) as session:
-            if not verify_chain(session, audit_key) or not verify_case_decisions(session):
+            # New-format persisted event fields are also sealed into the audit
+            # chain; reject tampered snapshots before exporting/restoring them.
+            event_valid, _legacy_events = verify_event_evidence(session)
+            if not verify_chain(session, audit_key) or not verify_case_decisions(session) or not event_valid:
                 raise ValueError('Sentinel audit integrity verification failed')
             head = session.get(AuditHead, 1)
             if head is None:

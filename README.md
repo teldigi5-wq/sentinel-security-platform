@@ -278,24 +278,22 @@ from the local host and opt into `SENTINEL_AUTH_MODE=database`. Token output fil
 must remain outside Git; generated `*.secret`/`*.token` files are ignored as a
 secondary safeguard. Credential mutations are never exposed over the API.
 
+## Sensor-to-asset enrollment (v0.10, laboratory only)
+
+For production-like local exercises, configure `SENTINEL_SENSOR_ASSETS` to match **every** sensor in `SENTINEL_SENSOR_KEYS`. Signed contacts from other asset IDs are rejected before any telemetry is committed. When no enrollment map is provided, first contact is pinned for backwards compatibility, but is not administrative authorization. The coverage API and dashboard distinguish these modes and show never-seen/stale gaps. See [asset enrollment and safe recovery](docs/SENSOR_ENROLLMENT.md).
+
 ## Sensor health (v0.9, laboratory only)
 
 The authenticated `GET /api/v1/sensors` endpoint and dashboard **Sensor coverage** tab enumerate configured sensor IDs even if they never connect. Signed contacts update a server-clock record; `healthy` becomes `stale` after 180 seconds without authenticated contact. The Linux SSH collector sends heartbeats at 60-second intervals during `--follow`. Neither a heartbeat nor a healthy status proves uncompromised sensor integrity or complete endpoint coverage. See [sensor coverage and blind spots](docs/SENSOR_COVERAGE.md). Explicit Alembic migration required before startup.
 
+## v0.11 — local sensor coverage monitoring
 
-## v0.10 — Sensor-to-asset enrollment
-
-Set `SENTINEL_SENSOR_ASSETS` with a complete mapping from configured sensor IDs to approved asset IDs. Signed contacts claiming a different asset are rejected, and previously observed asset identities cannot silently change. Unconfigured local labs retain **trust-on-first-contact** pinning only, which is not administrator-approved enrollment. Coverage shows `never_seen`, stale gaps, expected assets, and binding mode. See [Sensor Enrollment](docs/SENSOR_ENROLLMENT.md). This is not endpoint attestation.
-
-
-## v0.11 — Read-only operational coverage monitor
-
-Sentinel now provides a localhost-only, viewer-authenticated sensor coverage
-probe with fail-closed health-gap reporting. The optional command-line JSON
-report contains only aggregate counts; exit codes distinguish **healthy (0)**,
-**coverage gap (2)**, and **unknown / failure (1)**. It does not send alerts,
-modify incident records, or enforce network responses.
-See [operator instructions](docs/OPERATIONAL_COVERAGE_MONITOR.md).
+A zero-subscription, **read-only** coverage probe can now distinguish recent
+signed sensor contact from stale/never-seen inventories and return actionable
+exit codes to an explicitly configured local scheduler. It requires a
+viewer-scoped token in a private local file and makes no external connections.
+See [operational coverage monitoring](docs/OPERATIONAL_COVERAGE_MONITOR.md).
+This does not attest device integrity or deliver notifications on its own.
 
 
 ## v0.12 — Linux service deployment contract (not real-host certified)
@@ -304,17 +302,6 @@ Includes a non-root systemd unit, dedicated private key-file support for the SSH
 collector, and configuration/security regression tests. See
 [Linux Service](docs/LINUX_SERVICE.md). This is a reviewed installation template,
 **not** evidence of a successful production or real-host deployment.
-
-
-## v0.13 — Linux host preflight and evidence (not certified)
-
-The offline, read-only deployment preflight checks a dedicated non-root service
-account, private signing key, existing cursor directory, approved source log,
-strict metadata and reviewed systemd confinement. It emits bounded JSON evidence,
-with no credentials or log contents, and refuses to replace previous reports.
-Run it on an authorized Linux host as documented in
-[Linux host preflight](docs/LINUX_HOST_PREFLIGHT.md). Passing static checks does
-**not** certify reboot recovery, live ingestion or detection completeness.
 
 ## v0.14 — Isolated Linux recovery qualification
 
@@ -335,15 +322,6 @@ returns distinct exit codes for pass, gap, or indeterminate failure. This is a
 security certification. See [Linux runtime observation](docs/LINUX_RUNTIME_OBSERVATION.md).
 
 
-## v0.16 — Safe replay-nonce retention
-
-Sentinel now provides an **offline, opt-in** replay-nonce retention guard for local SQLite deployments. Preview mode is read-only; applying changes requires a new, authenticated SQLite snapshot and a valid audit chain. Only expired replay nonce records are deleted and every actual maintenance action is recorded in the audit chain. **Security events, case evidence, alerts, decisions and audit history are never pruned.** Read [the retention guard and limitations](docs/RETENTION_GUARD.md). Real-host qualification remains pending.
-
-## v0.17 — Sealed event-evidence export (offline, non-destructive)
-
-`python -m scripts.export_event_evidence export` creates an owner-only, HMAC-authenticated copy of older normalized security-event rows and linked alert IDs from an independently verified SQLite snapshot. `verify` checks integrity without the source database. This **does not delete events**, archive complete incident cases, or provide independently immutable evidence. The export may contain personal data (IP addresses): keep it off public hosting and protect it at rest. See [Evidence Export](docs/EVIDENCE_EXPORT.md).
-
-
 ## Integration candidate — dependency evidence (v0.19)
 
 GitHub Actions are pinned to reviewed upstream commit SHAs. Frontend CI generates a **candidate**
@@ -358,4 +336,9 @@ a separately reviewed constraints/lock approach. See
 
 ## v0.20 — Reviewed frontend dependency lock
 
-The frontend's `package-lock.json` was retrieved unchanged from the passing v0.19 GitHub Actions artifact and reviewed for manifest consistency, registry URLs and integrity metadata. CI now checks this committed lockfile and installs with `npm ci` rather than generating a candidate lock at build time. See [dependency release evidence](docs/DEPENDENCY_RELEASE_EVIDENCE.md). This does **not** mean that transitive dependencies have no vulnerabilities or that Python dependencies are fully pinned.
+The frontend's `package-lock.json` was retrieved from the successful v0.19 GitHub Actions artifact, inspected, and committed unchanged. CI now fails on manifest/lock mismatch, unacceptable package sources or absent integrity hashes, and uses `npm ci` instead of generating a candidate lock at build time. See [dependency release evidence](docs/DEPENDENCY_RELEASE_EVIDENCE.md). This is not an assertion that transitive dependencies are vulnerability-free or that the Python dependency graph is pinned.
+
+
+## v0.22 — Stored event payload integrity (release-candidate draft)
+
+New sensor ingestions bind the **persisted normalized event fields** (including server receipt time) into a versioned digest inside the transactional HMAC audit chain. Audit verification, SQLite backup and offline nonce maintenance check that new event rows still match their original audit references. Older events remain unanchored and are explicitly labeled `partial_legacy`; their contents cannot be retroactively authenticated. No external immutable evidence anchoring, sensor attestation or production certification is claimed. See [Event payload integrity](docs/EVENT_PAYLOAD_INTEGRITY.md).
