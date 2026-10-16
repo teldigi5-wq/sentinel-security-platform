@@ -20,3 +20,8 @@ out/
 coverage/
 htmlcov/
 *.log
+
+# Local operator secrets (never commit)
+*.secret
+*.token
+secrets/
