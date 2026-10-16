@@ -26,6 +26,23 @@ jobs:
       - name: Run core security regression tests
         working-directory: backend
         run: python -m pytest -q
+      # Scan the locked 3.12/Linux release/test/PostgreSQL set; no auto-fixes.
+      - name: Install isolated-version Python vulnerability scanner
+        run: python -m pip install 'pip-audit==2.10.1'
+      - name: Audit reviewed Python constraints (fail on any advisory or scan error)
+        run: >-
+          python -m pip_audit --no-deps --disable-pip --strict
+          --progress-spinner off --format json
+          --output "$GITHUB_WORKSPACE/sentinel-python-vulnerabilities.json"
+          --requirement backend/constraints/py312-linux-ci.txt
+      - name: Retain Python vulnerability evidence (including failures)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-python-vulnerability-audit
+          path: sentinel-python-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 7
   linux-recovery-drill:
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -112,6 +129,18 @@ jobs:
       - name: Production compilation
         working-directory: frontend
         run: npm run build
+      # Audits the complete locked frontend tree, including build dependencies.
+      - name: Audit frontend dependency lock (block high/critical advisories)
+        working-directory: frontend
+        run: npm audit --json --audit-level=high > "$GITHUB_WORKSPACE/sentinel-frontend-vulnerabilities.json"
+      - name: Retain frontend vulnerability evidence (including failures)
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: sentinel-frontend-vulnerability-audit
+          path: sentinel-frontend-vulnerabilities.json
+          if-no-files-found: warn
+          retention-days: 7
 
   postgres:
     runs-on: ubuntu-latest

@@ -44,3 +44,31 @@ def test_frontend_ci_uses_committed_lock_without_mutating_it():
     assert "sentinel-frontend-candidate-lock" not in frontend
     assert frontend.index("verify-lockfile.mjs") < frontend.index("npm ci") < frontend.index("npm ls")
     assert (ROOT / "docs" / "DEPENDENCY_RELEASE_EVIDENCE.md").is_file()
+
+
+def test_production_required_jobs_fail_on_dependency_audit_findings():
+    """Required backend/frontend status checks must include actual online audits.
+
+    The GitHub ruleset already makes these two jobs required. Do not move the
+    scans to an optional informational job or allow scanner failures to pass.
+    """
+    text = _workflow()
+    backend = text.split("\n  backend:\n", 1)[1].split("\n  linux-recovery-drill:\n", 1)[0]
+    frontend = text.split("\n  frontend:\n", 1)[1].split("\n  postgres:\n", 1)[0]
+    assert "pip-audit==2.10.1" in backend
+    assert "python -m pip_audit" in backend
+    assert "--no-deps --disable-pip --strict" in backend
+    assert "backend/constraints/py312-linux-ci.txt" in backend
+    assert "--format json" in backend
+    assert "npm audit --json --audit-level=high" in frontend
+    assert "sentinel-frontend-vulnerabilities.json" in frontend
+    for section in (backend, frontend):
+        assert "continue-on-error: true" not in section
+        assert "|| true" not in section
+        assert "exit 0" not in section
+    assert "if: always()" in backend
+    assert "if: always()" in frontend
+    assert "sentinel-python-vulnerabilities.json" in backend
+    assert "sentinel-python-vulnerability-audit" in backend
+    assert "sentinel-frontend-vulnerability-audit" in frontend
+    assert (ROOT / "docs" / "DEPENDENCY_VULNERABILITY_AUDIT.md").is_file()
