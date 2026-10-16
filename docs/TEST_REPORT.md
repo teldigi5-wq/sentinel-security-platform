@@ -67,3 +67,11 @@ A global Python `pip check` reported an unrelated pre-existing
 associated with Sentinel dependencies. Re-test using a clean CI environment.
 
 **Remote CI:** must be inspected after PR upload; do not claim it passed in advance.
+
+## Sentinel v0.5 — explicit schema and multiwriter audit qualification
+
+**Date:** 2026-10-16. **Command:** `cd backend && python -m pytest -q`.
+
+The new regression tests exercise refusal to start without an explicit migration, idempotent fresh migration, seeded audit head, detection of audit tail deletion / head tampering, successful guarded upgrade of a legacy SQLite database with HMAC evidence preservation, rejection of wrong audit keys and changed legacy schema, and concurrent SQLite ingestion with deterministic detection and a linear audit chain. Existing v0.4 tests are retained.
+
+The optional `test_postgres_integration.py` requires a real ephemeral PostgreSQL database and validates Alembic upgrades and concurrent ingestion. It is skipped locally where PostgreSQL is not configured and is a required separate job in CI. **Do not claim PostgreSQL or frontend CI success until the corresponding GitHub run is checked.** These tests do not establish production-grade HA, online migration guarantees, immutable audit storage or hardened deployment.

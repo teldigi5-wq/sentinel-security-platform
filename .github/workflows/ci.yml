@@ -42,3 +42,33 @@ jobs:
       - name: Production compilation
         working-directory: frontend
         run: npm run build
+
+  postgres:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: sentinel_ci
+          POSTGRES_USER: sentinel_ci
+          POSTGRES_PASSWORD: sentinel_ephemeral_ci_only
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U sentinel_ci -d sentinel_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      SENTINEL_TEST_POSTGRES_URL: postgresql+psycopg://sentinel_ci:sentinel_ephemeral_ci_only@localhost:5432/sentinel_ci
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend and PostgreSQL integration dependencies
+        run: python -m pip install -e './backend[postgres,test]'
+      - name: Execute database migration and concurrent ingestion regression
+        working-directory: backend
+        run: python -m pytest -q tests/test_postgres_integration.py

@@ -15,8 +15,9 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, func, select, update, event as sa_event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from .audit import append_audit, decision_digest, verify_case_decisions, verify_chain
+from .audit import append_audit, decision_digest, lock_audit_head, verify_case_decisions, verify_chain
 from .detection import evaluate
+from .database import verify_schema
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
 from .schemas import IncomingEvent, TriageRequest
 from .settings import OperatorIdentity, Settings, load_settings
@@ -45,14 +46,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             cursor.execute("PRAGMA foreign_keys=ON")
             cursor.close()
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
-    Base.metadata.create_all(engine)  # Bootstrap only; schema migrations required before production.
+    try:
+        verify_schema(engine)
+    except Exception:
+        engine.dispose()
+        raise
 
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.4.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.5.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
@@ -141,6 +146,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                  category=body.category.value, action=body.action.value,
                                  source_ip=body.source_ip, observed_at=body.observed_at)
         try:
+            lock_audit_head(session)  # Serialize detection + audit across writers.
             session.add(SensorNonce(sensor_id=sensor_id, nonce=nonce))
             session.add(incoming)
             session.flush()
@@ -222,7 +228,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         allowed = {"open": "investigating", "investigating": "resolved", "resolved": "investigating"}
         if allowed.get(instruction.expected_state) != instruction.new_state:
             raise HTTPException(status_code=422, detail="Unsupported incident state transition")
-        # A state-conditional SQL UPDATE avoids most lost-update races between operators.
+        lock_audit_head(session)  # Enforce deterministic writer ordering.
+        # A state-conditional SQL UPDATE prevents stale-state overwrites.
         changed = session.execute(update(Alert).where(
             Alert.id == alert_id, Alert.state == instruction.expected_state
         ).values(state=instruction.new_state).returning(Alert.id)).scalar_one_or_none()
