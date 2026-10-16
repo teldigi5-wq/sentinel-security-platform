@@ -170,7 +170,7 @@ async function exerciseBrowser() {
       await browser.evaluate(loginExpression(fixture.viewer));
       const state=await browser.evaluate(`(async()=>{${wait}
         await until(()=>document.querySelector('nav[aria-label="Main navigation"]'),'dashboard missing');
-        await until(()=>document.querySelector('.metric-grid strong')?.textContent===String(fixture.expectedEvents??1),'synthetic counters missing');
+        await until(()=>document.querySelector('.metric-grid strong')?.textContent===String(${fixture.expectedEvents??1}),'synthetic counters missing');
         const labels=[...document.querySelectorAll('nav button')].map(b=>b.textContent.trim());
         return {labels,metrics:[...document.querySelectorAll('.metric-grid strong')].map(x=>x.textContent),storage:[...Object.values(localStorage),...Object.values(sessionStorage)]};
       })()`);
