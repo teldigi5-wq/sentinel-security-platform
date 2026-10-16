@@ -1,8 +1,8 @@
-# Sentinel v0.1 — architectural decision record
+# Sentinel v0.2 — architectural decision record
 
 ## Mission and guarantees
 
-A local-first security operations foundation. Evidence is collected by named sensors using signed, replay-resistant messages. Deterministic detection produces traceable, inspectable alerts. The operator dashboard is read-only and requires a separate credential. **There is no offensive module, autonomous remediation, firewall management or active network prevention in this version.**
+A local-first security operations foundation. Evidence is collected by named sensors using signed, replay-resistant messages. Deterministic detection produces traceable, inspectable alerts. The operator dashboard requires a separate credential and supports recorded case decisions; it cannot execute containment or firewall actions. **There is no offensive module, autonomous remediation, firewall management or active network prevention in this version.**
 
 ## Deployed logical components
 
@@ -20,6 +20,7 @@ A local-first security operations foundation. Evidence is collected by named sen
        deterministic rules -----------------------|
                v                                  |
       [Alert + evidence links] -------------------|
+      [Operator case decisions] ------------------|
                |                                  |
      [HMAC-linked audit log] ---------------------|
                |
@@ -40,7 +41,7 @@ SQLite minimizes mandatory services. SQLAlchemy supports a PostgreSQL driver, bu
 
 ## ADR-003: deterministic alerts
 
-AI does not determine authorization, trust boundaries or security enforcement. Signatures protect sensor-to-core authenticity and integrity, not the truthfulness of the originating sensor. The v0.1 rule engine detects:
+AI does not determine authorization, trust boundaries or security enforcement. Signatures protect sensor-to-core authenticity and integrity, not the truthfulness of the originating sensor. The v0.2 rule engine continues to detect:
 
 - `auth-failure-burst-v1`: at least five failures in five minutes, grouped by source IP + targeted asset.
 - `network-denial-burst-v1`: at least twelve denied connections in two minutes, grouped by source IP + targeted asset.
@@ -55,7 +56,11 @@ The Next.js UI requests an operator credential interactively, keeping it only in
 
 ## ADR-005: trusted audits with limitations
 
-Audit entries are HMAC-chained. The integrity check catches edits to a retained chain provided the key remains trustworthy. This alone does **not** prevent deletion, total replacement, rollback, truncation, server compromise or malicious write access. Multiwriter safety, immutable external anchors, independent storage, retention and rotation must be implemented before making forensic non-repudiation claims.
+Audit entries are HMAC-chained. Case decisions are committed with an audit reference containing a SHA-256 digest of the stored decision. Integrity verification checks decision history and current alert states against those references and the signed audit chain. The integrity check catches edits to a retained chain provided the key remains trustworthy. This alone does **not** prevent deletion, total replacement, rollback, truncation, server compromise or malicious write access. Multiwriter safety, immutable external anchors, independent storage, retention and rotation must be implemented before making forensic non-repudiation claims.
+
+## ADR-006: operator triage is not automated response
+
+Only a valid operator can progress an alert open → investigating → resolved and reopen it for investigation. Each change requires a rationale recorded with a digest-bound audit reference. State-conditional database updates reject most stale submissions with HTTP 409. A shared token does not provide per-person attribution, and state-based compare-and-set does not replace versioned concurrency management. The triage endpoint cannot control endpoint agents, firewalls or identities.
 
 ## Planned phases, NOT IMPLEMENTED
 
