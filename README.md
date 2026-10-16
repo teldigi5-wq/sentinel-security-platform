@@ -1,6 +1,6 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.5.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.6.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
@@ -21,6 +21,7 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Premium operator dashboard | CI production build passed in prior v0.4 PR; interactive accessibility not verified | `frontend/app` |
 | Linux SSH authentication-log collector | Implemented; bounded, read-only, localhost-only | `backend/sentinel/collectors/linux_ssh.py`, integration tests |
 | Explicit database migrations + serialized audit head (v0.5) | Implemented locally; PostgreSQL qualification requires CI | `backend/migrations`, `backend/tests/test_migrations_audit.py` |
+| Signed SQLite backup, audit-verified snapshot and new-file offline recovery (v0.6) | Implemented in local test environment | `backend/sentinel/backup.py`, `backend/tests/test_backup_recovery.py` |
 | Wazuh/Suricata and general endpoint agents | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
@@ -124,6 +125,26 @@ python scripts/upgrade_legacy_db.py \
 The utility checks legacy table structure, verifies the full HMAC audit chain and triage history, creates a private SQLite backup, then stamps `0001_initial` and runs the auditable `0002_audit_head` migration. It refuses suspicious schema drift, wrong keys, mismatched histories and existing version markers. It **does not** handle a live database: stop all writers and retain a separate offline backup outside the monitored system. New databases should **never** use the legacy utility. PostgreSQL is tested in ephemeral CI for schema upgrades and concurrent requests; no claim of high availability, production capacity, online migrations or cross-region durability is made.
 
 **Audit concurrency:** the audit head is a transaction-scoped locking point. On PostgreSQL, `SELECT FOR UPDATE` serializes writes; on SQLite, an explicit write lock precedes event evaluation. The audit chain is checked against the stored head's last hash and count. This detects several classes of in-database deletion and chain forks but **does not provide independent append-only storage or resistance to an attacker who owns the database and the audit secret**.
+
+
+### SQLite backup and offline recovery (v0.6)
+
+The optional SQLite-only maintenance utility uses SQLite's online backup API to take a consistent snapshot (including committed WAL data). The snapshot is checked for database integrity, the expected migration revision, the complete HMAC-linked audit chain and case decisions. A private manifest records its checksum and audit head and is authenticated with \`SENTINEL_AUDIT_KEY\`.
+
+Run from the backend virtual environment, with the audit key loaded and a **private parent directory** under your control:
+
+\`\`\`bash
+mkdir -p "$HOME/sentinel-backups"
+chmod 700 "$HOME/sentinel-backups"
+cd backend
+python scripts/sqlite_recovery.py backup ./sentinel.db "$HOME/sentinel-backups/backup-001"
+python scripts/sqlite_recovery.py verify "$HOME/sentinel-backups/backup-001"
+
+# For a recovery drill, STOP the API and all database writers first.
+python scripts/sqlite_recovery.py restore "$HOME/sentinel-backups/backup-001" ./restored-sentinel.db
+\`\`\`
+
+Backup directories are created new with restrictive permissions. Restore never overwrites an existing target. The operator must ensure the API is stopped for restore; this tool cannot enforce process isolation. **Backups are not encrypted, immutable, remotely replicated, automatically scheduled, or PostgreSQL-compatible.** Retain the audit key separately; losing or rotating it without a retention plan makes old backup verification impossible. Maintain independent protected off-host copies and run documented restore drills before relying on the system.
 
 ### Linux SSH auth-log collector (optional real telemetry)
 

@@ -75,3 +75,10 @@ associated with Sentinel dependencies. Re-test using a clean CI environment.
 The new regression tests exercise refusal to start without an explicit migration, idempotent fresh migration, seeded audit head, detection of audit tail deletion / head tampering, successful guarded upgrade of a legacy SQLite database with HMAC evidence preservation, rejection of wrong audit keys and changed legacy schema, and concurrent SQLite ingestion with deterministic detection and a linear audit chain. Existing v0.4 tests are retained.
 
 The optional `test_postgres_integration.py` requires a real ephemeral PostgreSQL database and validates Alembic upgrades and concurrent ingestion. It is skipped locally where PostgreSQL is not configured and is a required separate job in CI. **Do not claim PostgreSQL or frontend CI success until the corresponding GitHub run is checked.** These tests do not establish production-grade HA, online migration guarantees, immutable audit storage or hardened deployment.
+
+
+## v0.6 — SQLite backup and restore validation
+
+Added \`backend/tests/test_backup_recovery.py\` to exercise backup/restore round trips, signed manifest verification, wrong-key rejection, checksum tampering, malformed schema, altered audit rows, symlinked snapshot rejection, private permissions, refusal to overwrite existing databases and snapshot verification despite later source changes.
+
+Local results: 54 backend tests passed; one PostgreSQL-only test skipped locally by design pending the dedicated PostgreSQL GitHub CI job. Real crash-consistency drills, forced power-loss tests, off-host encrypted backup storage and recovery objectives remain unverified.
