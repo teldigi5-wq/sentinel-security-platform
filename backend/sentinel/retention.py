@@ -12,7 +12,7 @@ from pathlib import Path
 from sqlalchemy import create_engine, delete, func, select, update, event as sa_event
 from sqlalchemy.orm import Session
 
-from .audit import append_audit, lock_audit_head, verify_case_decisions, verify_chain
+from .audit import append_audit, lock_audit_head, verify_case_decisions, verify_chain, verify_event_evidence
 from .backup import create_backup
 from .database import verify_schema
 from .models import AlertEvidence, AuditHead, AuditRecord, SecurityEvent, SensorNonce
@@ -61,7 +61,7 @@ def nonce_retention(source: Path, audit_key: str, *, days: int = 7,
     try:
         verify_schema(engine)
         with Session(engine) as session:
-            if not verify_chain(session, audit_key) or not verify_case_decisions(session):
+            if not verify_chain(session, audit_key) or not verify_case_decisions(session) or not verify_event_evidence(session)[0]:
                 raise ValueError('Audit or incident-decision verification failed; no data removed')
             eligible = session.scalar(select(func.count()).select_from(SensorNonce).where(SensorNonce.seen_at < cutoff)) or 0
             total = session.scalar(select(func.count()).select_from(SensorNonce)) or 0
@@ -84,7 +84,8 @@ def nonce_retention(source: Path, audit_key: str, *, days: int = 7,
             if (head.entry_count != snapshot['audit_entries'] or
                     head.last_hash != snapshot['audit_head'] or
                     not verify_chain(session, audit_key) or
-                    not verify_case_decisions(session)):
+                    not verify_case_decisions(session) or
+                    not verify_event_evidence(session)[0]):
                 session.rollback()
                 raise ValueError('Database changed or integrity failed after backup; no nonces removed')
             count = session.execute(delete(SensorNonce).where(SensorNonce.seen_at < cutoff)).rowcount

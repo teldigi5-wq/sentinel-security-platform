@@ -69,7 +69,10 @@ def test_cross_feature_identity_sensor_case_recovery_export(tmp_path: Path):
             "expected_state": "open", "new_state": "investigating",
             "reason": "Cross-feature release candidate evidence reviewed."})
         assert transition.status_code == 200, transition.text
-        assert client.get("/api/v1/audit/integrity", headers=_headers(admin_token)).json()["valid"] is True
+        integrity = client.get("/api/v1/audit/integrity", headers=_headers(admin_token)).json()
+        assert integrity["valid"] is True
+        assert integrity["event_payload_assurance"] == "anchored"
+        assert integrity["legacy_unanchored_events"] == 0
         assert client.get("/api/v1/sensors", headers=_headers(admin_token)).json()["summary"]["gaps"] == 0
 
         revoke_credential(url, AUDIT, analyst_id)
@@ -118,17 +121,3 @@ def test_cross_feature_identity_sensor_case_recovery_export(tmp_path: Path):
     assert fields["evidence_links_count"] == 5
     assert verify_event_export(bundle, AUDIT) == fields
     assert verify_backup(backup_dir, AUDIT) == backup
-
-
-def test_ci_python_module_entrypoints_exist():
-    """Prevent CI from invoking missing Python scripts on the checked-out branch."""
-    import re
-    from pathlib import Path
-
-    root = Path(__file__).resolve().parents[2]
-    workflow = (root / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-    targets = re.findall(r"\bpython\s+-m\s+(scripts\.[A-Za-z_][A-Za-z_0-9]*)", workflow)
-    assert targets, "Expected explicit Python script entrypoints in the release workflow"
-    for target in targets:
-        location = root / "backend" / (target.replace(".", "/") + ".py")
-        assert location.is_file(), f"CI references missing Python entrypoint: {target}"

@@ -47,4 +47,7 @@ python -m pytest -q
 
 A green CI result establishes automated acceptance on the tested commit only. It is **not** evidence of production readiness or protection of a real machine.
 
-CI entrypoint regression: v0.18 fixed a previously missing `scripts.benchmark_detection` job target by invoking the repository's actual `scripts.benchmark_quality` entry point. The integration test now validates every `python -m scripts.*` workflow target against the checked-out files; only a successful fresh CI run can qualify this correction.
+
+## v0.22 security review blocker addressed on follow-up PR
+
+A cumulative review identified that pre-v0.22 `event.ingested` HMAC audit records authenticated only event IDs. New ingestions now seal full normalized event fields; backups and retention additionally check the cross-reference. Existing rows are **not silently re-signed**: the API shows `partial_legacy` and a count of unanchored historical events. This is a storage-integrity improvement, not an off-host WORM anchor or proof that sensors are trustworthy. Review [Event payload integrity](EVENT_PAYLOAD_INTEGRITY.md) and run the full suite before merge.
