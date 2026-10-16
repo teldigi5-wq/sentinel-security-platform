@@ -147,8 +147,8 @@ export default function CommandCenter() {
       {active==="overview" && <>
         <div className="metric-grid">{[
           {label:"SECURITY EVENTS",value:overview?.events,Icon:Activity,desc:"Accepted sensor records"},
-          {label:"OPEN FINDINGS",value:overview?.alerts,Icon:Radar,desc:"Deterministic detections"},
-          {label:"HIGH-SEVERITY",value:overview?.high_alerts,Icon:ShieldAlert,desc:"Require investigation"},
+          {label:"TOTAL FINDINGS",value:overview?.alerts,Icon:Radar,desc:"All incident states"},
+          {label:"HIGH-SEVERITY",value:overview?.high_alerts,Icon:ShieldAlert,desc:"Including resolved records"},
           {label:"OBSERVED ASSETS",value:overview?.assets,Icon:Server,desc:"Distinct managed asset IDs"},
         ].map((m,i)=><div className="metric" key={m.label}><div className="metric-top"><span>{m.label}</span><m.Icon size={18} strokeWidth={1.6}/></div><strong>{m.value ?? "—"}</strong><div className="metric-bottom"><span className="metric-marker"/>{m.desc}</div></div>)}</div>
         <div className="content-grid"><section className="surface activity-surface"><div className="surface-head"><div><div className="kicker">EVENT ACTIVITY</div><h2>Threat signal composition</h2></div><Activity size={19}/></div><p className="surface-sub">Distribution across the latest {events.length} ingested records</p>{distribution.length === 0 ? <Empty title="No event telemetry yet" detail="Send signed events from an enrolled sensor to populate this view."/> : <div className="distribution">{distribution.map(([name,value])=><div className="dist-row" key={name}><div className="dist-label"><span>{actionName(name)}</span><strong>{value}</strong></div><div className="dist-track"><div style={{width:`${Math.max(3,100*value/Math.max(1,events.length))}%`}}/></div></div>)}</div>}</section>
