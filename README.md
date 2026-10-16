@@ -1,10 +1,29 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.7.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.8.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
 SENTINEL explores how security telemetry, deterministic rules, traceable incident evidence and constrained AI-assisted investigation can evolve into a verifiable defense platform. This initial release deliberately has **no destructive, retaliatory or live network enforcement features**.
+
+## Synthetic detection qualification (v0.8)
+
+Run from backend after installing the declared test dependencies:
+
+```bash
+python -m scripts.benchmark_quality --json synthetic-quality-results.json
+```
+
+The benchmark exercises **real signed ingestion, deterministic detection, alert
+storage and audit verification** against a fresh temporary migrated SQLite
+database for each of 15 explicit positive/negative cases. It fails on missing
+or unexpected alerts. GitHub CI stores an ephemeral machine-readable report.
+
+**All reported precision, recall, false-positive scenario counts and in-process
+TestClient timings are synthetic regression measurements only.** They are not
+real-world detection rates, network or sensor latency, performance SLAs or claims
+of production readiness. A real-world labeled evaluation dataset and independent
+traffic capture benchmark remain necessary.
 
 ## What is actually implemented
 
