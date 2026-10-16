@@ -13,6 +13,7 @@ type Overview = {events: number; alerts: number; high_alerts: number; assets: nu
 type Alert = {id: string; severity: string; title: string; explanation: string; asset_id: string; source_ip: string | null; state: string; rule_id: string; evidence_count: number; created_at: string};
 type Event = {id: string; asset_id: string; sensor_id: string; category: string; action: string; source_ip: string | null; observed_at: string};
 type Audit = {valid: boolean; records: number; assurance: string};
+type Decision = {id: number; previous_state: string; new_state: string; reason: string; actor: string; decided_at: string};
 type Evidence = {event_id: string; sensor_id: string; action: string; asset_id: string; source_ip: string | null; observed_at: string};
 
 const API = process.env.NEXT_PUBLIC_SENTINEL_API_BASE || "http://127.0.0.1:8000";
@@ -48,6 +49,9 @@ export default function CommandCenter() {
   const [audit, setAudit] = useState<Audit | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[] | null>(null);
+  const [decisions, setDecisions] = useState<Decision[]>([]);
+  const [triageReason, setTriageReason] = useState("");
+  const [triageBusy, setTriageBusy] = useState(false);
   const [sidebar, setSidebar] = useState(false);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
@@ -86,13 +90,38 @@ export default function CommandCenter() {
   }
   function signOut() {
     setToken(""); setEntry(""); setOverview(null); setAlerts([]); setEvents([]); setAudit(null);
-    setSelected(null); setEvidence(null); setLastSync(null); setError("");
+    setSelected(null); setEvidence(null); setDecisions([]); setTriageReason(""); setLastSync(null); setError("");
   }
   async function inspect(alertId: string) {
-    if (selected === alertId) { setSelected(null); setEvidence(null); return; }
-    setSelected(alertId); setEvidence(null);
-    try { setEvidence(await request<Evidence[]>(`alerts/${encodeURIComponent(alertId)}/evidence`, token)); }
-    catch { setEvidence([]); setError("Unable to load alert evidence"); }
+    if (selected === alertId) { setSelected(null); setEvidence(null); setDecisions([]); return; }
+    setSelected(alertId); setEvidence(null); setDecisions([]); setTriageReason("");
+    try {
+      const [ev, history] = await Promise.all([
+        request<Evidence[]>(`alerts/${encodeURIComponent(alertId)}/evidence`, token),
+        request<Decision[]>(`alerts/${encodeURIComponent(alertId)}/history`, token),
+      ]);
+      setEvidence(ev); setDecisions(history);
+    } catch { setEvidence([]); setError("Unable to load incident evidence or history"); }
+  }
+  async function triage(alert: Alert) {
+    const next = alert.state === "open" ? "investigating" : alert.state === "investigating" ? "resolved" : "investigating";
+    const reason = triageReason.trim();
+    if (reason.length < 8 || reason.length > 300 || triageBusy) return;
+    setTriageBusy(true);
+    try {
+      const response = await fetch(`${API}/api/v1/alerts/${encodeURIComponent(alert.id)}/transition`, {
+        method: "POST", cache: "no-store",
+        headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
+        body: JSON.stringify({expected_state: alert.state, new_state: next, reason}),
+      });
+      if (!response.ok) throw new Error(response.status === 409 ? "Alert changed. Refresh and review its current state." :
+        response.status === 401 ? "Operator credential rejected" : `Triage request returned HTTP ${response.status}`);
+      const [history] = await Promise.all([
+        request<Decision[]>(`alerts/${encodeURIComponent(alert.id)}/history`, token), refresh(token),
+      ]);
+      setDecisions(history); setTriageReason(""); setError("");
+    } catch (cause) { setError(cause instanceof Error ? cause.message : "Could not update incident"); }
+    finally { setTriageBusy(false); }
   }
   const distribution = useMemo(() => {
     const totals = new Map<string, number>();
@@ -109,7 +138,7 @@ export default function CommandCenter() {
   return <div className="app-shell">
     <aside className={`sidebar ${sidebar ? "sidebar-open" : ""}`}><Brand/><div className="sidegroup-label">WORKSPACE</div><nav aria-label="Main navigation">{nav.map(({id,text,Icon})=><button key={id} className={`navitem ${active===id?"current":""}`} onClick={()=>{setActive(id);setSidebar(false)}}><Icon size={18} strokeWidth={1.6}/><span>{text}</span>{active===id && <span className="navindicator"/>}</button>)}</nav>
       <div className="sidegroup-label second">SYSTEM STATUS</div><div className="side-status"><div className="status-row"><span className="live-dot"/> Security core connected</div><div className="status-desc">Deterministic detection<br/>No automated enforcement</div></div>
-      <div className="sidebar-end"><div className="edition">SENTINEL <span>COMMUNITY ENGINE</span><small>LOCAL-FIRST / V0.1.0</small></div><button className="signout" onClick={signOut}><LogOut size={17}/> Lock command center</button></div>
+      <div className="sidebar-end"><div className="edition">SENTINEL <span>COMMUNITY ENGINE</span><small>LOCAL-FIRST / V0.2.0</small></div><button className="signout" onClick={signOut}><LogOut size={17}/> Lock command center</button></div>
     </aside>
     {sidebar && <button aria-label="Close navigation" className="mobile-overlay" onClick={()=>setSidebar(false)}/>}
     <div className="app-main"><header className="topbar"><div className="topbar-left"><button className="mobile-menu iconbtn" onClick={()=>setSidebar(!sidebar)} aria-label="Toggle navigation">{sidebar?<X size={20}/>:<Menu size={20}/>}</button><span className="topbar-breadcrumb">SENTINEL</span><ChevronRight size={13}/><span className="topbar-current">{nav.find(n=>n.id===active)?.text}</span></div><div className="topbar-right"><span className="workspace-pill"><span className="live-dot"/> LOCAL SYSTEM</span><button className="iconbtn" aria-label="Refresh telemetry" title="Refresh telemetry" disabled={busy} onClick={()=>void refresh(token)}><RefreshCcw size={17} className={busy?"spin":""}/></button><span className="operator-monogram">OP</span></div></header>
@@ -118,18 +147,23 @@ export default function CommandCenter() {
       {active==="overview" && <>
         <div className="metric-grid">{[
           {label:"SECURITY EVENTS",value:overview?.events,Icon:Activity,desc:"Accepted sensor records"},
-          {label:"OPEN FINDINGS",value:overview?.alerts,Icon:Radar,desc:"Deterministic detections"},
-          {label:"HIGH-SEVERITY",value:overview?.high_alerts,Icon:ShieldAlert,desc:"Require investigation"},
+          {label:"TOTAL FINDINGS",value:overview?.alerts,Icon:Radar,desc:"All incident states"},
+          {label:"HIGH-SEVERITY",value:overview?.high_alerts,Icon:ShieldAlert,desc:"Including resolved records"},
           {label:"OBSERVED ASSETS",value:overview?.assets,Icon:Server,desc:"Distinct managed asset IDs"},
         ].map((m,i)=><div className="metric" key={m.label}><div className="metric-top"><span>{m.label}</span><m.Icon size={18} strokeWidth={1.6}/></div><strong>{m.value ?? "—"}</strong><div className="metric-bottom"><span className="metric-marker"/>{m.desc}</div></div>)}</div>
         <div className="content-grid"><section className="surface activity-surface"><div className="surface-head"><div><div className="kicker">EVENT ACTIVITY</div><h2>Threat signal composition</h2></div><Activity size={19}/></div><p className="surface-sub">Distribution across the latest {events.length} ingested records</p>{distribution.length === 0 ? <Empty title="No event telemetry yet" detail="Send signed events from an enrolled sensor to populate this view."/> : <div className="distribution">{distribution.map(([name,value])=><div className="dist-row" key={name}><div className="dist-label"><span>{actionName(name)}</span><strong>{value}</strong></div><div className="dist-track"><div style={{width:`${Math.max(3,100*value/Math.max(1,events.length))}%`}}/></div></div>)}</div>}</section>
         <section className="surface posture-surface"><div className="surface-head"><div><div className="kicker">CONTROL POSTURE</div><h2>System assurance</h2></div><ShieldCheck size={19}/></div><div className="posture"><div className="posture-line"><span className="posture-icon"><Check size={17}/></span><div><strong>Sensor authentication</strong><small>HMAC-SHA256 signed ingestion</small></div><span className="neutral-label">ENABLED</span></div><div className="posture-line"><span className="posture-icon"><Check size={17}/></span><div><strong>Replay resistance</strong><small>Nonce uniqueness + timestamp tolerance</small></div><span className="neutral-label">ENABLED</span></div><div className="posture-line"><span className={`posture-icon ${audit?.valid?"":"warning"}`}><Fingerprint size={17}/></span><div><strong>Audit integrity</strong><small>{audit?.records??0} locally chained records</small></div><span className={audit?.valid?"neutral-label":"warning-label"}>{audit?.valid?"VALID":"CHECK"}</span></div><div className="posture-line"><span className="posture-icon warning"><Shield size={17}/></span><div><strong>Response enforcement</strong><small>Planned for a controlled future release</small></div><span className="warning-label">NOT INSTALLED</span></div></div></section></div>
         <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">LATEST FINDINGS</div><h2>Detection register</h2></div><button className="text-action" onClick={()=>setActive("alerts")}>All investigations <ArrowUpRight size={15}/></button></div><AlertTable alerts={alerts.slice(0,5)} onSelect={inspect}/></section>
       </>}
-      {active==="alerts" && <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">EVIDENCE-BASED FINDINGS</div><h2>Alert register <span className="count">{alerts.length}</span></h2></div><div className="small-tag"><ShieldCheck size={14}/> READ-ONLY</div></div><AlertTable alerts={alerts} onSelect={inspect}/>{selectedAlert && <div className="evidence-panel"><div className="evidence-head"><div><div className="kicker">CASE EVIDENCE</div><h3>{selectedAlert.title}</h3></div><button aria-label="Close evidence panel" className="iconbtn" onClick={()=>{setSelected(null);setEvidence(null)}}><X size={18}/></button></div><p>{selectedAlert.explanation}</p><div className="evidence-meta"><span>RULE {selectedAlert.rule_id}</span><span>ASSET {selectedAlert.asset_id}</span><span>SOURCE {selectedAlert.source_ip || "NOT REPORTED"}</span></div>{evidence===null?<p>Retrieving evidence…</p>:evidence.length?evidence.map(row=><div className="evidence-row" key={row.event_id}><span>{formatDate(row.observed_at)}</span><strong>{actionName(row.action)}</strong><code>{row.event_id.slice(0,12)}</code></div>):<p>No evidence returned.</p>}</div>}</section>}
+      {active==="alerts" && <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">EVIDENCE-BASED FINDINGS</div><h2>Alert register <span className="count">{alerts.length}</span></h2></div><div className="small-tag"><ShieldCheck size={14}/> MANUAL TRIAGE</div></div><AlertTable alerts={alerts} onSelect={inspect}/>{selectedAlert && <div className="evidence-panel"><div className="evidence-head"><div><div className="kicker">CASE EVIDENCE</div><h3>{selectedAlert.title}</h3></div><button aria-label="Close evidence panel" className="iconbtn" onClick={()=>{setSelected(null);setEvidence(null);setDecisions([])}}><X size={18}/></button></div><p>{selectedAlert.explanation}</p><div className="evidence-meta"><span>RULE {selectedAlert.rule_id}</span><span>ASSET {selectedAlert.asset_id}</span><span>SOURCE {selectedAlert.source_ip || "NOT REPORTED"}</span></div>{evidence===null?<p>Retrieving evidence…</p>:evidence.length?evidence.map(row=><div className="evidence-row" key={row.event_id}><span>{formatDate(row.observed_at)}</span><strong>{actionName(row.action)}</strong><code>{row.event_id.slice(0,12)}</code></div>):<p>No evidence returned.</p>}
+        <div className="triage-panel"><div className="kicker">OPERATOR DECISION</div><h3>Incident triage</h3><p>Current state: <strong>{selectedAlert.state}</strong>. All changes require a reason and are recorded in the audit trail.</p>
+        <label htmlFor="triage-reason">Decision rationale</label><textarea id="triage-reason" value={triageReason} maxLength={300} rows={3} placeholder="Describe the evidence reviewed and your decision (8–300 characters)" onChange={e=>setTriageReason(e.target.value)} />
+        <button className="outline-btn" type="button" disabled={triageBusy || triageReason.trim().length < 8} onClick={()=>void triage(selectedAlert)}>{triageBusy?"Saving…":selectedAlert.state==="open"?"Start investigation":selectedAlert.state==="investigating"?"Mark resolved":"Reopen investigation"}</button>
+        <div className="triage-history"><div className="kicker">DECISION HISTORY</div>{decisions.length ? decisions.map(item=><div className="triage-history-item" key={item.id}><strong>{item.previous_state} → {item.new_state}</strong><span>{formatDate(item.decided_at)} · {item.actor}</span><p>{item.reason}</p></div>):<p>No previous decisions recorded.</p>}</div></div>
+        </div>}</section>}
       {active==="events" && <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">SENSOR RECORDS</div><h2>Validated event stream <span className="count">{events.length}</span></h2></div><div className="small-tag"><Radio size={14}/> HMAC SIGNED</div></div>{events.length===0?<Empty title="No events received" detail="The ingestion API has not accepted any security events yet."/>:<div className="table-scroll"><table><thead><tr><th>Observed</th><th>Asset</th><th>Action</th><th>Source IP</th><th>Sensor</th></tr></thead><tbody>{events.map(event=><tr key={event.id}><td className="mono subtle">{formatDate(event.observed_at)}</td><td>{event.asset_id}</td><td><span className="action-dot"/>{actionName(event.action)}</td><td className="mono">{event.source_ip||"—"}</td><td className="subtle">{event.sensor_id}</td></tr>)}</tbody></table></div>}</section>}
       {active==="integrity" && <section className="surface integrity-surface"><div className="integrity-hero"><div className={`integrity-icon ${audit?.valid ? "verified":"unverified"}`}><Fingerprint size={35}/></div><div><div className="kicker">AUDIT VERIFICATION</div><h2>{audit?.valid?"Local chain verified":"Integrity verification failed"}</h2><p>{audit?.valid?"Recorded audit entries match the configured signing key and expected link sequence.":"Review audit storage and signing keys. Treat existing evidence as potentially untrusted."}</p></div></div><div className="integrity-stats"><div><span>AUDIT RECORDS</span><strong>{audit?.records ?? "—"}</strong></div><div><span>INTEGRITY CHECK</span><strong>{audit?.valid ? "PASS" : "FAIL"}</strong></div><div><span>ASSURANCE</span><strong>LOCAL HMAC</strong></div></div><div className="integrity-caveat"><CircleAlert size={18}/>HMAC chaining detects edits when the key and complete chain remain trustworthy. It is not immutable storage and cannot independently prove that records were not deleted or replaced.</div></section>}
-      <footer className="footer"><div>SENTINEL SECURITY OPERATIONS <span>/</span> VERSION 0.1.0</div><div>PRIVATE BY DEFAULT <span className="footer-separator">·</span> NO ACTIVE RESPONSE</div></footer></div>
+      <footer className="footer"><div>SENTINEL SECURITY OPERATIONS <span>/</span> VERSION 0.2.0</div><div>PRIVATE BY DEFAULT <span className="footer-separator">·</span> NO ACTIVE RESPONSE</div></footer></div>
     </div>
   </div>;
 }
