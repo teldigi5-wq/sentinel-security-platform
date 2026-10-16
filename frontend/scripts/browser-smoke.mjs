@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -13,7 +14,8 @@ import { setTimeout as delay } from 'node:timers/promises';
 
 const ORIGIN = 'http://127.0.0.1:3100';
 const API_PORT = 8000;
-const fixture = {
+const REAL_BACKEND = process.argv.includes('--real-backend');
+const fixture = REAL_BACKEND ? JSON.parse(readFileSync(process.env.SENTINEL_E2E_FIXTURE_FILE, 'utf8')) : {
   invalid: `invalid-${'x'.repeat(42)}`,
   viewer: `viewer-${'v'.repeat(42)}`,
   admin: `admin-${'a'.repeat(42)}`,
@@ -127,9 +129,9 @@ function loginExpression(token){return `(async()=>{${wait}
 async function phase(name,fn){await fn();console.log(`PASS: ${name}`);}
 
 async function exerciseBrowser() {
-  const api=makeApi();let next=null;let browser=null;let tmp=null;
+  const api=REAL_BACKEND?null:makeApi();let next=null;let browser=null;let tmp=null;
   try {
-    await listen(api,API_PORT);
+    if(api)await listen(api,API_PORT);
     next=spawn('npm',['run','start','--','-p','3100','-H','127.0.0.1'],
       {cwd:process.cwd(),env:{...process.env,NEXT_TELEMETRY_DISABLED:'1'},detached:true,stdio:'ignore'});
     await waitForReady();
@@ -146,6 +148,19 @@ async function exerciseBrowser() {
       })()`);
       assert.equal(x.type,'password');assert.match(x.label,/Operator credential/);assert.equal(x.stored,0);
     });
+    await phase('Basic keyboard and form accessibility contract',async()=>{
+      const state=await browser.evaluate(`(()=>{
+        const field=document.querySelector('#operator-token');
+        const form=field?.closest('form');
+        const label=document.querySelector('label[for="operator-token"]');
+        const submit=form?.querySelector('button[type="submit"]');
+        return {fieldLabeled:!!label&&label.textContent.trim().length>0,
+          fieldFocusable:field?.tabIndex>=0,
+          submitNamed:!!submit&&submit.textContent.trim().length>0,
+          mainPresent:!!document.querySelector('main')};
+      })()`);
+      assert(state.fieldLabeled&&state.fieldFocusable&&state.submitNamed, 'Login input accessibility contract failed');
+    });
     await phase('Invalid operator credential rejected',async()=>{
       await browser.evaluate(loginExpression(fixture.invalid));
       const message=await browser.evaluate(`(async()=>{${wait}await until(()=>document.querySelector('[role="alert"]'),'missing invalid-login alert');return document.querySelector('[role="alert"]').textContent;})()`);
@@ -155,12 +170,12 @@ async function exerciseBrowser() {
       await browser.evaluate(loginExpression(fixture.viewer));
       const state=await browser.evaluate(`(async()=>{${wait}
         await until(()=>document.querySelector('nav[aria-label="Main navigation"]'),'dashboard missing');
-        await until(()=>document.querySelector('.metric-grid strong')?.textContent==='1','synthetic counters missing');
+        await until(()=>document.querySelector('.metric-grid strong')?.textContent===String(fixture.expectedEvents??1),'synthetic counters missing');
         const labels=[...document.querySelectorAll('nav button')].map(b=>b.textContent.trim());
         return {labels,metrics:[...document.querySelectorAll('.metric-grid strong')].map(x=>x.textContent),storage:[...Object.values(localStorage),...Object.values(sessionStorage)]};
       })()`);
       assert(state.labels.includes('Event intelligence'));assert(!state.labels.includes('Evidence integrity'));
-      assert.equal(state.metrics[0],'1');assert.deepEqual(state.storage,[]);
+      assert.equal(state.metrics[0],String(fixture.expectedEvents??1));assert.deepEqual(state.storage,[]);
     });
     await phase('Navigation renders signed fixture event and role-limited UI',async()=>{
       const x=await browser.evaluate(`(async()=>{${wait}
@@ -171,7 +186,20 @@ async function exerciseBrowser() {
       })()`);
       assert.equal(x.activePage,'page');assert.equal(x.eventVisible,true);assert.equal(x.table,true);assert.equal(x.triage,false);
     });
-    await phase('Mobile viewport, navigable drawer and no page overflow',async()=>{
+    if(REAL_BACKEND)await phase('Real evidence links resolve through authenticated API',async()=>{
+      const actual=await browser.evaluate(`(async()=>{${wait}
+        const tab=[...document.querySelectorAll('nav button')].find(b=>b.textContent.includes('Alert intelligence')||b.textContent.includes('Alert register')||b.textContent.includes('Detection register'));
+        const actualTab=tab || [...document.querySelectorAll('nav button')].find(b=>b.textContent.trim()==='Investigations');
+        if(!actualTab)throw new Error('Alert navigation missing');
+        actualTab.click();
+        await until(()=>document.querySelector('button[aria-label^="Review evidence for"]'),'Real backend alert missing');
+        document.querySelector('button[aria-label^="Review evidence for"]').click();
+        await until(()=>document.querySelectorAll('.evidence-row').length===5,'Real signed evidence links missing');
+        return {count:document.querySelectorAll('.evidence-row').length,readonly:!document.querySelector('#triage-reason')};
+      })()`);
+      assert.equal(actual.count,fixture.expectedAlertEvidence);assert(actual.readonly);
+    });
+    await phase('Mobile viewport, navigable drawer and no page overflow',async()=>{ 
       await browser.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
       const x=await browser.evaluate(`(async()=>{${wait}
         await until(()=>getComputedStyle(document.querySelector('.mobile-menu')).display!=='none','mobile menu missing');
@@ -204,13 +232,13 @@ async function exerciseBrowser() {
         await until(()=>document.querySelector('.integrity-surface h2'),'integrity detail missing');
         return {heading:document.querySelector('.integrity-surface h2').textContent,records:document.querySelector('.integrity-stats')?.textContent};
       })()`);
-      assert.match(state.heading,/Local chain verified/);assert.match(state.records,/4/);
+      assert.match(state.heading,/Local chain verified/);assert.match(state.records,new RegExp(String(fixture.expectedAuditRecords??4)));
     });
-    console.log('PASS: browser suite completed (real Chromium, synthetic localhost data only)');
+    console.log(REAL_BACKEND?'PASS: browser suite completed (real Chromium and real synthetic-seeded FastAPI)': 'PASS: browser suite completed (real Chromium, synthetic localhost data only)');
   } finally {
     if(browser)await browser.close().catch(()=>{});
     if(next?.pid){try{process.kill(-next.pid,'SIGKILL');}catch{next.kill('SIGKILL');}}
-    await new Promise(resolve=>api.close(resolve));
+    if(api)await new Promise(resolve=>api.close(resolve));
     if(tmp)await rm(tmp,{recursive:true,force:true,maxRetries:8,retryDelay:100});
   }
 }
