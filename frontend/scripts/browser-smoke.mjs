@@ -134,7 +134,9 @@ async function phase(name,fn){await fn();console.log(`PASS: ${name}`);}
 async function pressKey(browser,key,shift=false){
   const vk={Tab:9,Enter:13,Escape:27}[key];
   const params={key,code:key,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk,modifiers:shift?8:0};
-  await browser.send('Input.dispatchKeyEvent',{...params,type:'rawKeyDown'});
+  await browser.send('Input.dispatchKeyEvent',key==='Enter'
+    ? {...params,type:'keyDown',text:'\r',unmodifiedText:'\r'}
+    : {...params,type:'rawKeyDown'});
   await browser.send('Input.dispatchKeyEvent',{...params,type:'keyUp'});
 }
 
