@@ -69,14 +69,14 @@ jobs:
           python-version: '3.12'
       - name: Install test dependencies
         run: python -m pip install -e './backend[test]'
-      - name: Run synthetic signed-ingestion detection regression
+      - name: Run independent synthetic detection regression
         working-directory: backend
-        run: python -m scripts.benchmark_quality --json synthetic-quality-results.json
-      - name: Preserve short-lived synthetic benchmark evidence
+        run: python -m scripts.benchmark_detection --json synthetic-benchmark-results.json
+      - name: Attach test evidence (synthetic only)
         uses: actions/upload-artifact@v4
         with:
-          name: sentinel-v08-synthetic-quality
-          path: backend/synthetic-quality-results.json
+          name: sentinel-synthetic-detection-results
+          path: backend/synthetic-benchmark-results.json
           if-no-files-found: error
           retention-days: 7
   frontend:
@@ -127,16 +127,24 @@ jobs:
         working-directory: backend
         run: python -m pytest -q tests/test_postgres_integration.py
 
-  nonce-retention-guard:
+  release-candidate-integration:
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - name: Install declared dependencies
+      - name: Install declared backend test dependencies
         run: python -m pip install -e './backend[test]'
-      - name: Verify backup-gated nonce retention (fixture only)
+      - name: Verify single-head migration and cross-feature recovery
         working-directory: backend
-        run: python -m pytest -o addopts='' -q tests/test_retention_guard.py
+        run: python -m pytest -q tests/test_release_candidate.py --junitxml="$GITHUB_WORKSPACE/sentinel-release-candidate.xml"
+      - name: Retain synthetic integration evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-release-candidate-integration
+          path: sentinel-release-candidate.xml
+          if-no-files-found: warn
+          retention-days: 7
