@@ -333,3 +333,8 @@ localhost-only API. It emits a scrubbed, non-overwriting `0600` evidence report 
 returns distinct exit codes for pass, gap, or indeterminate failure. This is a
 **current-state observation**, not a reboot, restart, rotation or complete host
 security certification. See [Linux runtime observation](docs/LINUX_RUNTIME_OBSERVATION.md).
+
+
+## v0.16 — Safe replay-nonce retention
+
+Sentinel now provides an **offline, opt-in** replay-nonce retention guard for local SQLite deployments. Preview mode is read-only; applying changes requires a new, authenticated SQLite snapshot and a valid audit chain. Only expired replay nonce records are deleted and every actual maintenance action is recorded in the audit chain. **Security events, case evidence, alerts, decisions and audit history are never pruned.** Read [the retention guard and limitations](docs/RETENTION_GUARD.md). Real-host qualification remains pending.
