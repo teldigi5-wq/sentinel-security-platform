@@ -383,14 +383,59 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         return {"alert_id": alert_id, "state": instruction.new_state, "decision_id": decision.id}
 
+    def read_integrity_snapshot() -> dict:
+        """Recheck *current* data using a stable, read-only transaction.
+
+        Authentication occurs in the route dependencies. This intentionally
+        does not run on every ingestion request; an operator must schedule a
+        probe. A database failure is unknown, never a healthy result.
+        """
+        try:
+            with engine.connect() as connection:
+                if engine.dialect.name == "postgresql":
+                    connection = connection.execution_options(isolation_level="REPEATABLE READ")
+                with connection.begin():
+                    with Session(bind=connection) as check:
+                        event_valid, legacy_count = verify_event_evidence(check)
+                        chain_valid = verify_chain(check, settings.audit_key)
+                        decisions_valid = verify_case_decisions(check)
+                        records = check.scalar(select(func.count()).select_from(AuditRecord)) or 0
+                        event_count = check.scalar(select(func.count()).select_from(SecurityEvent)) or 0
+            valid = bool(event_valid and chain_valid and decisions_valid)
+            return {"valid": valid, "records": records, "events": event_count,
+                    "legacy_unanchored_events": legacy_count,
+                    "event_payload_assurance": ("integrity_failed" if not valid else
+                                                 "partial_legacy" if legacy_count else "anchored")}
+        except Exception as exc:
+            # Never return DB internals, SQL text, a secret or a false green.
+            raise HTTPException(status_code=503, detail="Integrity state unavailable") from exc
+
+    @app.get("/api/v1/audit/status")
+    def audit_status(_: Operator):
+        """Viewer-scoped minimal evidence status for a least-privilege probe.
+
+        Contains no actor, event, token, source IP, or incident metadata.
+        This is evidence database consistency, not sensor/host protection.
+        """
+        result = read_integrity_snapshot()
+        if not result["valid"]:
+            state = "integrity_failed"
+        elif result["legacy_unanchored_events"]:
+            state = "partial_legacy"
+        elif result["events"] == 0:
+            state = "empty"
+        else:
+            state = "anchored"
+        return {"state": state, "valid": result["valid"],
+                "has_events": result["events"] > 0,
+                "assurance": "Local DB audit and event verification only; not external immutability or host certification"}
+
     @app.get("/api/v1/audit/integrity")
-    def audit_integrity(_: Admin, session: DB):
-        anchored_valid, legacy_count = verify_event_evidence(session)
-        return {"valid": verify_chain(session, settings.audit_key) and verify_case_decisions(session) and anchored_valid,
-                "records": session.scalar(select(func.count()).select_from(AuditRecord)) or 0,
-                "event_payload_assurance": ("integrity_failed" if not anchored_valid else
-                                             "partial_legacy" if legacy_count else "anchored"),
-                "legacy_unanchored_events": legacy_count,
+    def audit_integrity(_: Admin):
+        result = read_integrity_snapshot()
+        return {"valid": result["valid"], "records": result["records"],
+                "event_payload_assurance": result["event_payload_assurance"],
+                "legacy_unanchored_events": result["legacy_unanchored_events"],
                 "assurance": "HMAC chain, triage and v1 event-row cross-check; legacy event payloads are unverifiable; not externally immutable"}
 
     return app
