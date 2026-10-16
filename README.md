@@ -278,24 +278,22 @@ from the local host and opt into `SENTINEL_AUTH_MODE=database`. Token output fil
 must remain outside Git; generated `*.secret`/`*.token` files are ignored as a
 secondary safeguard. Credential mutations are never exposed over the API.
 
+## Sensor-to-asset enrollment (v0.10, laboratory only)
+
+For production-like local exercises, configure `SENTINEL_SENSOR_ASSETS` to match **every** sensor in `SENTINEL_SENSOR_KEYS`. Signed contacts from other asset IDs are rejected before any telemetry is committed. When no enrollment map is provided, first contact is pinned for backwards compatibility, but is not administrative authorization. The coverage API and dashboard distinguish these modes and show never-seen/stale gaps. See [asset enrollment and safe recovery](docs/SENSOR_ENROLLMENT.md).
+
 ## Sensor health (v0.9, laboratory only)
 
 The authenticated `GET /api/v1/sensors` endpoint and dashboard **Sensor coverage** tab enumerate configured sensor IDs even if they never connect. Signed contacts update a server-clock record; `healthy` becomes `stale` after 180 seconds without authenticated contact. The Linux SSH collector sends heartbeats at 60-second intervals during `--follow`. Neither a heartbeat nor a healthy status proves uncompromised sensor integrity or complete endpoint coverage. See [sensor coverage and blind spots](docs/SENSOR_COVERAGE.md). Explicit Alembic migration required before startup.
 
+## v0.11 — local sensor coverage monitoring
 
-## v0.10 — Sensor-to-asset enrollment
-
-Set `SENTINEL_SENSOR_ASSETS` with a complete mapping from configured sensor IDs to approved asset IDs. Signed contacts claiming a different asset are rejected, and previously observed asset identities cannot silently change. Unconfigured local labs retain **trust-on-first-contact** pinning only, which is not administrator-approved enrollment. Coverage shows `never_seen`, stale gaps, expected assets, and binding mode. See [Sensor Enrollment](docs/SENSOR_ENROLLMENT.md). This is not endpoint attestation.
-
-
-## v0.11 — Read-only operational coverage monitor
-
-Sentinel now provides a localhost-only, viewer-authenticated sensor coverage
-probe with fail-closed health-gap reporting. The optional command-line JSON
-report contains only aggregate counts; exit codes distinguish **healthy (0)**,
-**coverage gap (2)**, and **unknown / failure (1)**. It does not send alerts,
-modify incident records, or enforce network responses.
-See [operator instructions](docs/OPERATIONAL_COVERAGE_MONITOR.md).
+A zero-subscription, **read-only** coverage probe can now distinguish recent
+signed sensor contact from stale/never-seen inventories and return actionable
+exit codes to an explicitly configured local scheduler. It requires a
+viewer-scoped token in a private local file and makes no external connections.
+See [operational coverage monitoring](docs/OPERATIONAL_COVERAGE_MONITOR.md).
+This does not attest device integrity or deliver notifications on its own.
 
 
 ## v0.12 — Linux service deployment contract (not real-host certified)
@@ -305,17 +303,6 @@ collector, and configuration/security regression tests. See
 [Linux Service](docs/LINUX_SERVICE.md). This is a reviewed installation template,
 **not** evidence of a successful production or real-host deployment.
 
-
-## v0.13 — Linux host preflight and evidence (not certified)
-
-The offline, read-only deployment preflight checks a dedicated non-root service
-account, private signing key, existing cursor directory, approved source log,
-strict metadata and reviewed systemd confinement. It emits bounded JSON evidence,
-with no credentials or log contents, and refuses to replace previous reports.
-Run it on an authorized Linux host as documented in
-[Linux host preflight](docs/LINUX_HOST_PREFLIGHT.md). Passing static checks does
-**not** certify reboot recovery, live ingestion or detection completeness.
-
 ## v0.14 — Isolated Linux recovery qualification
 
 Run `cd backend && python -m scripts.drill_linux_collector --json-out /absolute/private/unused-evidence.json`
@@ -323,3 +310,13 @@ for an isolated signed-telemetry, lost-ACK replay, log rotation, simulated
 outage/recovery and audit-integrity drill. A failing phase produces nonzero exit.
 This does **not** qualify systemd, a real Linux host, or real attack-detection
 accuracy. See [Linux Recovery Drill](docs/LINUX_RECOVERY_DRILL.md).
+
+## v0.15 — Read-only Linux runtime observation
+
+For authorized Linux hosts, the new `python -m scripts.observe_linux_host` command
+checks the actual systemd unit's running/unprivileged state and verifies the specific
+explicitly enrolled sensor's recent contact using a private viewer token against the
+localhost-only API. It emits a scrubbed, non-overwriting `0600` evidence report and
+returns distinct exit codes for pass, gap, or indeterminate failure. This is a
+**current-state observation**, not a reboot, restart, rotation or complete host
+security certification. See [Linux runtime observation](docs/LINUX_RUNTIME_OBSERVATION.md).
