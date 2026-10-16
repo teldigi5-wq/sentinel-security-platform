@@ -3,10 +3,11 @@ import hashlib
 import hmac
 import json
 import re
+from collections import Counter
 from datetime import timezone
 from sqlalchemy import select, update
 from sqlalchemy.orm import Session
-from .models import Alert, AlertDecision, AuditHead, AuditRecord, SecurityEvent, utcnow
+from .models import Alert, AlertDecision, AlertEvidence, AuditHead, AuditRecord, SecurityEvent, utcnow
 
 
 def _time_key(at):
@@ -119,6 +120,79 @@ def verify_event_evidence(session: Session) -> tuple[bool, int]:
         seen.add(event_id)
     return True, legacy_count
 
+
+
+# v0.26: Immutable alert fields and each new evidence association are audited.
+# Mutable triage state is independently checked against signed decisions.
+ALERT_ANCHOR_RE = re.compile(r"^alert:v1:([0-9a-f-]{36}):([0-9a-f]{64})$")
+ALERT_LINK_RE = re.compile(r"^link:v1:([0-9a-f-]{36}):([0-9a-f-]{36})$")
+
+
+def alert_digest(row: Alert) -> str:
+    """Portable SHA-256 of immutable persisted alert fields."""
+    fields = ["sentinel-alert-v1", row.id, row.rule_id, row.fingerprint,
+              row.severity, row.title, row.explanation, row.asset_id,
+              row.source_ip, _time_key(row.created_at)]
+    return hashlib.sha256(json.dumps(fields, separators=(",", ":"), ensure_ascii=True)
+                          .encode("ascii")).hexdigest()
+
+
+def verify_alert_evidence(session: Session) -> tuple[bool, int]:
+    """Validate alert payloads and link rows against authenticated audit entries.
+
+    Historical ID-only alerts and links are explicitly counted as legacy:
+    their payloads cannot be retrospectively authenticated. An audit key
+    compromise or malicious sensor is outside this verification boundary.
+    """
+    alerts = {row.id: row for row in session.scalars(select(Alert))}
+    recorded = session.scalars(select(AuditRecord).where(
+        AuditRecord.action == "alert.created").order_by(AuditRecord.id)).all()
+    if len(recorded) != len(alerts):
+        return False, 0
+    seen: set[str] = set()
+    sealed: set[str] = set()
+    unanchored = 0
+    for audit in recorded:
+        match = ALERT_ANCHOR_RE.fullmatch(audit.resource)
+        if match:
+            alert_id, expected = match.groups()
+            row = alerts.get(alert_id)
+            if row is None or audit.actor != "detection-engine" or not hmac.compare_digest(
+                    expected, alert_digest(row)):
+                return False, unanchored
+            sealed.add(alert_id)
+        else:
+            alert_id = audit.resource
+            if ":" in alert_id or alert_id not in alerts:
+                return False, unanchored
+            unanchored += 1
+        if alert_id in seen:
+            return False, unanchored
+        seen.add(alert_id)
+
+    existing_links = {(link.alert_id, link.event_id) for link in session.scalars(select(AlertEvidence))}
+    linked = session.scalars(select(AuditRecord).where(
+        AuditRecord.action == "alert.evidence.linked").order_by(AuditRecord.id)).all()
+    recorded_links: set[tuple[str, str]] = set()
+    for audit in linked:
+        match = ALERT_LINK_RE.fullmatch(audit.resource)
+        if audit.actor != "detection-engine" or match is None:
+            return False, unanchored
+        pair = match.groups()
+        if pair not in existing_links or pair in recorded_links:
+            return False, unanchored
+        recorded_links.add(pair)
+
+    for pair in existing_links:
+        if pair not in recorded_links:
+            if pair[0] in sealed:
+                return False, unanchored
+            unanchored += 1
+    link_counts = Counter(alert_id for alert_id, _ in existing_links)
+    for alert in alerts.values():
+        if alert.evidence_count != link_counts.get(alert.id, 0):
+            return False, unanchored
+    return True, unanchored
 
 def decision_digest(row: AlertDecision) -> str:
     """Bind case decision contents to the signed append-only audit chain."""

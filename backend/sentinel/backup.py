@@ -18,7 +18,7 @@ from urllib.parse import quote
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session
 
-from .audit import verify_case_decisions, verify_chain, verify_event_evidence
+from .audit import verify_alert_evidence, verify_case_decisions, verify_chain, verify_event_evidence
 from .database import HEAD_REVISION, verify_schema
 from alembic.migration import MigrationContext
 from .models import AuditHead
@@ -92,7 +92,7 @@ def _verified_snapshot(path: Path, audit_key: str, *, revision: str = HEAD_REVIS
             # New-format persisted event fields are also sealed into the audit
             # chain; reject tampered snapshots before exporting/restoring them.
             event_valid, _legacy_events = verify_event_evidence(session)
-            if not verify_chain(session, audit_key) or not verify_case_decisions(session) or not event_valid:
+            if not verify_chain(session, audit_key) or not verify_case_decisions(session) or not event_valid or not verify_alert_evidence(session)[0]:
                 raise ValueError('Sentinel audit integrity verification failed')
             head = session.get(AuditHead, 1)
             if head is None:
