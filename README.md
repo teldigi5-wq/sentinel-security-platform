@@ -1,6 +1,6 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.1.0**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.2.0**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
@@ -15,8 +15,9 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Failed-login burst detection | Implemented | `backend/sentinel/detection.py` |
 | Network-denied burst, malware indicator and denied elevation rules | Implemented | Deterministic rules and tests |
 | Alert/evidence correlation | Implemented | `/api/v1/alerts/{id}/evidence` |
-| HMAC-linked local audit and integrity checking | Implemented with documented limitations | `backend/sentinel/audit.py` |
-| Authenticated read-only APIs | Implemented | `/api/v1/overview`, `/alerts`, `/events` |
+| HMAC-linked local audit and decision integrity checks | Implemented with documented limitations | `backend/sentinel/audit.py` |
+| Authenticated telemetry read APIs | Implemented | `/api/v1/overview`, `/alerts`, `/events` |
+| Manual analyst incident triage | Implemented for local lab | Explicit state transitions, reasons, recorded decision history, tests |
 | Premium operator dashboard | Source provided; frontend build **not locally verified** | `frontend/app` |
 | Live Wazuh/Suricata/endpoint adapters | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
@@ -35,10 +36,11 @@ SQLite (default) / PostgreSQL (optional future target)
    │
    ├── Security events
    ├── Deterministic detection → Alerts → Evidence links
-   └── HMAC-chained local audit records
+   ├── HMAC-chained local audit records
+   └── Alert decision history (hashed audit references)
    │
    ▼
-Authenticated read-only APIs ◄── Next.js operator dashboard
+Authenticated analyst API ◄── Next.js operator dashboard
 ```
 
 Full rationale: [Architecture](docs/ARCHITECTURE.md) · [Threat model](docs/THREAT_MODEL.md) · [Security policy](SECURITY.md)
@@ -86,7 +88,7 @@ npm run dev
 # Open http://localhost:3000, enter SENTINEL_OPERATOR_TOKEN from .env
 ```
 
-The operator token stays in tab memory and must be re-entered after reload. The web app fetches observed data; it does not manufacture alerts or inflate metrics.
+The operator token stays in tab memory and must be re-entered after reload. The web app fetches observed data; it does not manufacture alerts or inflate metrics. Authenticated operators can investigate, resolve and reopen findings with a required rationale; no firewall or endpoint action is triggered.
 
 ### Windows PowerShell alternative
 
@@ -108,9 +110,11 @@ Tests use isolated temporary SQLite databases and random event nonces. They requ
 - `POST /api/v1/events`: HMAC-signed sensor ingestion, HTTP 202.
 - `GET /api/v1/overview`, `/api/v1/events`, `/api/v1/alerts`: bearer-protected read-only telemetry.
 - `GET /api/v1/alerts/{id}/evidence`: verified event references for a rule match.
+- `GET /api/v1/alerts/{id}/history`: operator-only decision history.
+- `POST /api/v1/alerts/{id}/transition`: operator-only case state changes. JSON fields: `expected_state`, `new_state`, `reason` (8–300 characters). Transitions: `open → investigating → resolved → investigating`. State conflicts return `409`. This changes *case state only*, not enforcement controls.
 - `GET /api/v1/audit/integrity`: local HMAC-chain integrity check.
 
-Sensor signing algorithm: `HMAC_SHA256(sensor_secret, UTF8(sensor_id + "\\n" + unix_seconds + "\\n" + hex_32_nonce + "\\n" + SHA256_HEX(raw_body)))`, hex-encoded lowercase. Header names: `X-Sentinel-Sensor`, `X-Sentinel-Timestamp`, `X-Sentinel-Nonce`, `X-Sentinel-Signature`. Clock tolerance ±120 seconds. Payload limit 8 KiB. Sender identifiers are enrolled through private environment configuration in v0.1.
+Sensor signing algorithm: `HMAC_SHA256(sensor_secret, UTF8(sensor_id + "\\n" + unix_seconds + "\\n" + hex_32_nonce + "\\n" + SHA256_HEX(raw_body)))`, hex-encoded lowercase. Header names: `X-Sentinel-Sensor`, `X-Sentinel-Timestamp`, `X-Sentinel-Nonce`, `X-Sentinel-Signature`. Clock tolerance ±120 seconds. Payload limit 8 KiB. Sender identifiers are enrolled through private environment configuration in v0.2.
 
 ## Technology choices
 
@@ -122,7 +126,7 @@ Sensor signing algorithm: `HMAC_SHA256(sensor_secret, UTF8(sensor_id + "\\n" + u
 
 ## Security and operational limits
 
-**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept has no MFA, real endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit chain is not proof against full DB/key compromise. The open-core server currently assumes single-process local deployment. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
+**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept uses one shared operator bearer credential (no per-person attribution) and has no MFA, real endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit check also cross-checks case decision contents and current case state, but it is not proof against full DB/key compromise or chain truncation. The open-core server currently assumes single-process local deployment. State-based conditional updates are not a substitute for versioned concurrency control. Existing local databases add the new `alert_decisions` table through startup bootstrap; production database migration management remains planned. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
 
 ## Planned, not implemented
 
