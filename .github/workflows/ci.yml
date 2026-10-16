@@ -87,22 +87,16 @@ jobs:
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: '22'
-      # Candidate lock is generated in CI until a reviewed frontend/package-lock.json
-      # is committed. Capturing it does NOT make future installs reproducible.
-      - name: Generate candidate frontend dependency lock
+      # The versioned lock is reviewed and committed; CI must never regenerate it.
+      - name: Verify committed dependency lock and registry provenance
         working-directory: frontend
-        run: npm install --package-lock-only --ignore-scripts --no-audit --no-fund
-      - name: Install exact dependencies from the generated lock
+        run: node scripts/verify-lockfile.mjs
+      - name: Install exactly from reviewed dependency lock
         working-directory: frontend
         run: npm ci --no-audit --no-fund
-      - name: Capture frontend dependency resolution evidence
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
-        with:
-          name: sentinel-frontend-candidate-lock
-          path: frontend/package-lock.json
-          if-no-files-found: warn
-          retention-days: 7
+      - name: Verify installed direct dependency tree
+        working-directory: frontend
+        run: npm ls --depth=0
       - name: Static type verification
         working-directory: frontend
         run: npm run typecheck

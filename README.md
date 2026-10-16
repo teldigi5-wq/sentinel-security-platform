@@ -355,3 +355,7 @@ review dependency provenance and vulnerability status, commit the reviewed `fron
 remove the lock-generation step and use `npm ci` only. Python installation ranges also need
 a separately reviewed constraints/lock approach. See
 [Dependency release evidence](docs/DEPENDENCY_RELEASE_EVIDENCE.md).
+
+## v0.20 — Reviewed frontend dependency lock
+
+The frontend's `package-lock.json` was retrieved unchanged from the passing v0.19 GitHub Actions artifact and reviewed for manifest consistency, registry URLs and integrity metadata. CI now checks this committed lockfile and installs with `npm ci` rather than generating a candidate lock at build time. See [dependency release evidence](docs/DEPENDENCY_RELEASE_EVIDENCE.md). This does **not** mean that transitive dependencies have no vulnerabilities or that Python dependencies are fully pinned.

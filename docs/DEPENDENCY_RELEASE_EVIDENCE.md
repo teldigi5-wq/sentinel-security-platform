@@ -52,3 +52,11 @@ frontend dependency resolution, **not** end-to-end reproducible builds, release
 artifact provenance, dependency vulnerability clearance, Linux-host qualification,
 or authorization for autonomous security operations. Do not merge the stacked
 security PRs based only on this check.
+
+## v0.20 — Reviewed and committed frontend lock
+
+The lockfile was retrieved unchanged from successful workflow [38883189383](https://github.com/teldigi5-wq/sentinel-security-platform/actions/runs/38883189383), head commit `d4f93240cfda96bc5a594cab23f39106322cc4aa`, artifact `12037524902`. Lock SHA-256: `9dc3ef0b8ba19d3a817fbf2ae3b672c24d8a281e0023c8327541cb51996ef253`.
+
+The 60 resolved packages use the npm registry HTTPS URL and include integrity metadata. The checked-in npm v3 lock matches the direct runtime/development dependency declarations in `package.json`. CI rejects missing hashes, altered manifest metadata, unapproved package sources and non-locked installs; it runs `npm ci`, direct dependency listing, type-checking and a production build. Lockfile changes must be reviewed in future dependency-update PRs.
+
+**Limits:** This structural review is not a malware, CVE, or license audit. The Python package graph remains unpinned and real Linux deployment remains unqualified. The original v0.19 candidate-generation instructions above describe the historical state, not the new CI behavior.

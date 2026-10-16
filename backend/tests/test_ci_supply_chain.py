@@ -33,18 +33,14 @@ def test_ci_declares_read_only_default_token():
     assert not re.search(r"(?m)^\s+(?:contents|actions|pull-requests):\s+write\s*$", text)
 
 
-def test_frontend_ci_installs_from_a_lock_and_discloses_lock_status():
+def test_frontend_ci_uses_committed_lock_without_mutating_it():
     text = _workflow()
     frontend = text.split("\n  frontend:\n", 1)[1].split("\n  postgres:\n", 1)[0]
+    assert FRONTEND_LOCK.is_file(), "A reviewed lockfile must be committed"
+    assert "node scripts/verify-lockfile.mjs" in frontend
     assert "npm ci --no-audit --no-fund" in frontend
-    assert "npm install --no-audit --no-fund" not in frontend
-    if FRONTEND_LOCK.exists():
-        assert "npm install --package-lock-only" not in frontend, (
-            "A committed lock must be reviewed, not regenerated during CI"
-        )
-    else:
-        assert "npm install --package-lock-only --ignore-scripts" in frontend
-        assert "sentinel-frontend-candidate-lock" in frontend
-        assert "path: frontend/package-lock.json" in frontend
-        assert frontend.index("npm install --package-lock-only") < frontend.index("npm ci")
+    assert "npm ls --depth=0" in frontend
+    assert "npm install" not in frontend
+    assert "sentinel-frontend-candidate-lock" not in frontend
+    assert frontend.index("verify-lockfile.mjs") < frontend.index("npm ci") < frontend.index("npm ls")
     assert (ROOT / "docs" / "DEPENDENCY_RELEASE_EVIDENCE.md").is_file()
