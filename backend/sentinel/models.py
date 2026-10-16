@@ -67,7 +67,7 @@ class AuditRecord(Base):
     previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
 
- 
+
 class AlertDecision(Base):
     """Operator incident state changes, stored independently from the mutable alert row."""
     __tablename__ = "alert_decisions"
@@ -79,3 +79,11 @@ class AlertDecision(Base):
     actor: Mapped[str] = mapped_column(String(96), nullable=False)
     decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
     __table_args__ = (Index("idx_decisions_alert_time", "alert_id", "decided_at"),)
+
+
+class AuditHead(Base):
+    """Single serialized tail pointer (not an independent immutable audit anchor)."""
+    __tablename__ = "audit_heads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False)

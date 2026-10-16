@@ -1,6 +1,6 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.4.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.5.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
@@ -18,8 +18,9 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | HMAC-linked local audit, triage integrity cross-check | Implemented with documented limitations | `backend/sentinel/audit.py` |
 | Authenticated telemetry read APIs | Implemented | `/api/v1/overview`, `/alerts`, `/events` |
 | Manual analyst incident triage | Implemented for local lab | Explicit state transitions, reasons, recorded decision history, tests |
-| Premium operator dashboard | Source provided; frontend build **not locally verified** | `frontend/app` |
+| Premium operator dashboard | CI production build passed in prior v0.4 PR; interactive accessibility not verified | `frontend/app` |
 | Linux SSH authentication-log collector | Implemented; bounded, read-only, localhost-only | `backend/sentinel/collectors/linux_ssh.py`, integration tests |
+| Explicit database migrations + serialized audit head (v0.5) | Implemented locally; PostgreSQL qualification requires CI | `backend/migrations`, `backend/tests/test_migrations_audit.py` |
 | Wazuh/Suricata and general endpoint agents | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
@@ -44,7 +45,7 @@ Lab event emitter / opt-in Linux SSH auth-log collector (other sensors planned)
 FastAPI signed event ingestion ──► schema validation and bounded payloads
    │
    ▼
-SQLite (default) / PostgreSQL (optional future target)
+SQLite (default) / PostgreSQL (optional migration-tested target)
    │
    ├── Security events
    ├── Deterministic detection → Alerts → Evidence links
@@ -80,6 +81,7 @@ python -m pip install -e '.[test]'
 cd ..
 set -a; source .env; set +a
 cd backend
+python -m alembic -c alembic.ini upgrade head
 uvicorn sentinel.main:app --host 127.0.0.1 --port 8000
 ```
 
@@ -103,6 +105,25 @@ npm run dev
 ```
 
 The operator token stays in tab memory and must be re-entered after reload. The web app fetches observed data; it does not manufacture alerts or inflate metrics. Operators can now investigate, resolve or reopen findings with a mandatory documented rationale, without triggering firewall or endpoint enforcement.
+
+
+### Explicit database migrations (v0.5)
+
+**New installation:** with credentials loaded in the terminal, run `cd backend && python -m alembic -c alembic.ini upgrade head` **before starting the API**. The API now fails closed when its database revision does not match the expected schema. It never silently creates or mutates production tables on startup. New databases receive legacy schema revision `0001_initial` followed by the serialized audit-head revision `0002_audit_head`. Re-running `upgrade head` is idempotent.
+
+**Existing v0.4 SQLite with evidence you must retain:** stop all Sentinel processes, keep existing HMAC audit key, and perform the guarded offline baseline-and-upgrade using a **new backup path**:
+
+```bash
+cd backend
+python scripts/upgrade_legacy_db.py \
+  --database /absolute/path/to/old/sentinel.db \
+  --backup /absolute/private/path/to/sentinel-v04-backup.db \
+  --confirm-offline
+```
+
+The utility checks legacy table structure, verifies the full HMAC audit chain and triage history, creates a private SQLite backup, then stamps `0001_initial` and runs the auditable `0002_audit_head` migration. It refuses suspicious schema drift, wrong keys, mismatched histories and existing version markers. It **does not** handle a live database: stop all writers and retain a separate offline backup outside the monitored system. New databases should **never** use the legacy utility. PostgreSQL is tested in ephemeral CI for schema upgrades and concurrent requests; no claim of high availability, production capacity, online migrations or cross-region durability is made.
+
+**Audit concurrency:** the audit head is a transaction-scoped locking point. On PostgreSQL, `SELECT FOR UPDATE` serializes writes; on SQLite, an explicit write lock precedes event evaluation. The audit chain is checked against the stored head's last hash and count. This detects several classes of in-database deletion and chain forks but **does not provide independent append-only storage or resistance to an attacker who owns the database and the audit secret**.
 
 ### Linux SSH auth-log collector (optional real telemetry)
 
@@ -156,18 +177,18 @@ Sensor signing algorithm: `HMAC_SHA256(sensor_secret, UTF8(sensor_id + "\\n" + u
 
 - **Next.js / React / TypeScript**, bespoke editorial-dark design system and Lucide icons.
 - **Python / FastAPI / Pydantic**, typed strict HTTP contracts.
-- **SQLAlchemy + SQLite for local operation**; PostgreSQL driver supported but production concurrency/migrations not yet qualified.
+- **SQLAlchemy + Alembic** for versioned SQLite/PostgreSQL schema changes; PostgreSQL concurrency integration tests in CI, but production HA is not qualified.
 - **Read-only Linux SSH collector** with private cursor state and local HMAC-signed submission; no privileged firewall/network commands.
 - **Pytest and GitHub Actions** for regression checks.
 - No mandatory hosted AI service, payment API, commercial SOC vendor or paid account.
 
 ## Security and operational limits
 
-**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept supports per-operator credentials with role-based permissions, but still permits one shared **legacy local-only** operator token when no individual enrollment mapping is configured; it has no MFA, general-purpose endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit integrity check also cross-checks stored incident decision payloads and current case status, but it remains vulnerable to full DB/key compromise and truncation. The open-core server currently assumes single-process local deployment. The state-based compare-and-set check prevents most stale updates but is not a substitute for versioned concurrency control under adversarial workloads. Existing local databases add the new `alert_decisions` table through startup bootstrap; production migration management is not yet provided. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
+**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept supports per-operator credentials with role-based permissions, but still permits one shared **legacy local-only** operator token when no individual enrollment mapping is configured; it has no MFA, general-purpose endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit integrity check also cross-checks stored incident decision payloads and current case status, but it remains vulnerable to full DB/key compromise and truncation. The open-core server currently assumes single-process local deployment. The state-based compare-and-set check prevents most stale updates but is not a substitute for versioned concurrency control under adversarial workloads. Schema migrations are now mandatory; the legacy SQLite upgrade path requires an offline backup and an explicit guarded baseline. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
 
 ## Planned, not implemented
 
-General network/endpoint sensor adapters and real agent enrollment; evidence graph and threat-intelligence enrichment; resource-bounded local AI analyst; tenant-aware OIDC/MFA access; approved defensive controls and audited rollback; robust storage and migration strategies; a consent-based offensive-security testing laboratory.
+General network/endpoint sensor adapters and real agent enrollment; evidence graph and threat-intelligence enrichment; resource-bounded local AI analyst; tenant-aware OIDC/MFA access; approved defensive controls and audited rollback; production PostgreSQL operations, backup/restore verification and external audit anchoring; a consent-based offensive-security testing laboratory.
 
 ### Portfolio proof standard
 

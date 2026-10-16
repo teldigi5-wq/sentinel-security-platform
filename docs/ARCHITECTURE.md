@@ -1,4 +1,4 @@
-# Sentinel v0.4 — architectural decision record
+# Sentinel v0.5 — architectural decision record
 
 ## Mission and guarantees
 
@@ -96,3 +96,11 @@ controlled local backward compatibility with the old environment configuration.
 This is a transitional, manually managed local model without MFA, SSO, expiring
 sessions, dedicated authentication datastore, or remote-user protections. No claim
 of enterprise IAM qualification is made.
+
+## ADR-009: migration-controlled schema, deterministic concurrent audits (v0.5)
+
+The API now **refuses to start** unless the Alembic revision is exactly `0002_audit_head`. No `Base.metadata.create_all` is invoked at runtime. New SQLite and PostgreSQL databases are initialized by an explicit Alembic `upgrade head`; a guarded legacy SQLite migration requires an audit-validated schema, current HMAC key, and a private backup. A failed migration must be investigated and restored from backup; migrations are not guaranteed online or reversible.
+
+All ingestion and case state changes acquire an audit head lock **before** writing dependent records. PostgreSQL uses a row-level `FOR UPDATE` lock; SQLite acquires a database write lock through a no-op update. Each event, decision and audit tail update is part of the same transaction; rollback undoes all of them. The local audit integrity checker verifies hash chaining plus audit head count and tail to detect certain deletions/forks. This is not an immutable/off-host log, and a compromised DB plus key can still forge history. Long-held locks limit throughput: this design prioritizes correctness for a small local SOC over high ingestion rates. Benchmark and introduce a durable queue before enterprise-scale deployment.
+
+The PostgreSQL integration test runs only when a dedicated test database URL is supplied. Deployment must explicitly enable PostgreSQL support and validate backup/restore, operational privileges, rollback and resource pressure.
