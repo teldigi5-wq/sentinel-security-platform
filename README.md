@@ -352,3 +352,12 @@ nonempty, v0.22-anchored evidence; exit `2` means a gap/degraded state; exit `1`
 means unknown. This does **not** install a monitoring service, attest actual
 Linux-host protection, or replace operator/incident review. See
 [Runtime integrity monitoring](docs/RUNTIME_INTEGRITY_MONITOR.md).
+
+### v0.25: operator-driven Linux host recovery witness
+
+A separate, non-privileged checkpoint CLI observes a known Linux collector and the
+authenticated local Sentinel API before and after an **operator-authorized** service
+restart, natural SSH log rotation and full host reboot. It stores private, bounded,
+sequence-linked evidence and never changes host state; the resulting checks are
+**not an attestation or production certificate**. See
+[`docs/LINUX_HOST_RECOVERY_QUALIFICATION.md`](docs/LINUX_HOST_RECOVERY_QUALIFICATION.md).

@@ -1,7 +1,7 @@
 """Read-only, loopback-only operational coverage probe.
 
-Only authenticated, server-observed contact is measured. Never interpret a
-healthy connection as attestation of the protected host or complete logs.
+Exit-code monitoring must fail closed on malformed coverage responses. The probe
+reports server-observed contact only; it cannot attest that a host is protected.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ VALID_STATES = frozenset({"healthy", "stale", "never_seen"})
 
 
 class CoverageProbeError(RuntimeError):
-    """Non-sensitive operational error."""
+    """Non-sensitive operator-facing failure."""
 
 
 @dataclass(frozen=True)
@@ -31,6 +31,7 @@ class CoverageAssessment:
     explicitly_enrolled: int
     gaps: tuple[str, ...]
     sensor_states: tuple[tuple[str, str, str], ...] = ()
+    sensor_activity: tuple[tuple[str, int, int], ...] = ()
 
     @property
     def clear(self) -> bool:
@@ -48,7 +49,7 @@ class CoverageAssessment:
 
 
 def assess(payload: object) -> CoverageAssessment:
-    """Fail closed if any sensor or declared summary cannot be reconciled."""
+    """Do not trust a remote summary; recompute state from individual sensors."""
     if not isinstance(payload, dict) or not isinstance(payload.get("sensors"), list):
         raise CoverageProbeError("Invalid sensor coverage response")
     sensors = payload["sensors"]
@@ -61,6 +62,7 @@ def assess(payload: object) -> CoverageAssessment:
     ids: set[str] = set()
     explicit = 0
     states: list[tuple[str, str, str]] = []
+    activity: list[tuple[str, int, int]] = []
     for entry in sensors:
         if not isinstance(entry, dict):
             raise CoverageProbeError("Invalid sensor entry")
@@ -71,6 +73,12 @@ def assess(payload: object) -> CoverageAssessment:
             raise CoverageProbeError("Invalid sensor identity or coverage state")
         ids.add(identifier)
         states.append((identifier, state, mode))
+        if "event_count" in entry or "heartbeat_count" in entry:
+            events, beats = entry.get("event_count"), entry.get("heartbeat_count")
+            if (type(events) is not int or type(beats) is not int
+                    or not 0 <= events <= 2**63 - 1 or not 0 <= beats <= 2**63 - 1):
+                raise CoverageProbeError("Invalid sensor activity counters")
+            activity.append((identifier, events, beats))
         totals[state] += 1
         if mode == "explicit":
             explicit += 1
@@ -86,11 +94,11 @@ def assess(payload: object) -> CoverageAssessment:
     return CoverageAssessment(
         configured=len(sensors), healthy=totals["healthy"], stale=totals["stale"],
         never_seen=totals["never_seen"], explicitly_enrolled=explicit, gaps=tuple(sorted(gaps)),
-        sensor_states=tuple(sorted(states)))
+        sensor_states=tuple(sorted(states)), sensor_activity=tuple(sorted(activity)))
 
 
 def read_private_token(path: Path) -> str:
-    """Load viewer-scoped bearer token from an owned private regular file."""
+    """Load a viewer/analyst token without using command-line arguments or logging it."""
     if not path.is_absolute():
         raise CoverageProbeError("Token file path must be absolute")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -116,7 +124,7 @@ def read_private_token(path: Path) -> str:
 
 
 def fetch_coverage(*, port: int, token: str, timeout: float = 5.0) -> CoverageAssessment:
-    """Fixed loopback transport; no user-selectable URL, DNS, redirects or proxies."""
+    """Fixed local destination; no URL override, DNS, proxy, redirect or remote host."""
     if not 1 <= port <= 65535 or not 0.5 <= timeout <= 10.0:
         raise CoverageProbeError("Invalid local probe configuration")
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)

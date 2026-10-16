@@ -39,6 +39,9 @@ jobs:
       - name: Exercise signed ingestion and recovery (fixture only)
         working-directory: backend
         run: python -m scripts.drill_linux_collector --json-out "$GITHUB_WORKSPACE/sentinel-isolated-drill.json"
+      - name: Verify operator-driven Linux recovery witness fixtures (not real-host certification)
+        working-directory: backend
+        run: python -m pytest -q tests/test_host_recovery_qualification.py
       - name: Attach synthetic-only qualification evidence
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
