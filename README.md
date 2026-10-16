@@ -304,3 +304,14 @@ Includes a non-root systemd unit, dedicated private key-file support for the SSH
 collector, and configuration/security regression tests. See
 [Linux Service](docs/LINUX_SERVICE.md). This is a reviewed installation template,
 **not** evidence of a successful production or real-host deployment.
+
+
+## v0.13 — Linux host preflight and evidence (not certified)
+
+The offline, read-only deployment preflight checks a dedicated non-root service
+account, private signing key, existing cursor directory, approved source log,
+strict metadata and reviewed systemd confinement. It emits bounded JSON evidence,
+with no credentials or log contents, and refuses to replace previous reports.
+Run it on an authorized Linux host as documented in
+[Linux host preflight](docs/LINUX_HOST_PREFLIGHT.md). Passing static checks does
+**not** certify reboot recovery, live ingestion or detection completeness.
