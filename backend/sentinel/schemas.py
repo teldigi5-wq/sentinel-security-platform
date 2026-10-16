@@ -1,6 +1,7 @@
 """Strict event contract; no arbitrary metadata or attacker-controlled commands."""
 from datetime import datetime
 from enum import Enum
+from typing import Literal
 from ipaddress import ip_address
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -57,3 +58,24 @@ class IncomingEvent(BaseModel):
             raise ValueError("Category and action are inconsistent")
         if self.action in (Action.auth_failure, Action.network_denied) and not self.source_ip:
             raise ValueError("source_ip is required for network and authentication failure events")
+
+
+class SensorHeartbeat(BaseModel):
+    """Heartbeats contain no telemetry or arbitrary instructions."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9._:-]+$")
+
+
+class TriageRequest(BaseModel):
+    """Fail-closed alert triage contract; no externally supplied operator identity."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    expected_state: Literal["open", "investigating", "resolved"]
+    new_state: Literal["open", "investigating", "resolved"]
+    reason: str = Field(min_length=8, max_length=300)
+
+    @field_validator("reason")
+    @classmethod
+    def no_control_characters(cls, value: str) -> str:
+        if any(ord(character) < 32 or ord(character) == 127 for character in value):
+            raise ValueError("Reason must not contain control characters")
+        return value
