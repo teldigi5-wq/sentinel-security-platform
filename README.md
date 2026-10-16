@@ -338,3 +338,7 @@ security certification. See [Linux runtime observation](docs/LINUX_RUNTIME_OBSER
 ## v0.16 — Safe replay-nonce retention
 
 Sentinel now provides an **offline, opt-in** replay-nonce retention guard for local SQLite deployments. Preview mode is read-only; applying changes requires a new, authenticated SQLite snapshot and a valid audit chain. Only expired replay nonce records are deleted and every actual maintenance action is recorded in the audit chain. **Security events, case evidence, alerts, decisions and audit history are never pruned.** Read [the retention guard and limitations](docs/RETENTION_GUARD.md). Real-host qualification remains pending.
+
+## v0.17 — Sealed event-evidence export (offline, non-destructive)
+
+`python -m scripts.export_event_evidence export` creates an owner-only, HMAC-authenticated copy of older normalized security-event rows and linked alert IDs from an independently verified SQLite snapshot. `verify` checks integrity without the source database. This **does not delete events**, archive complete incident cases, or provide independently immutable evidence. The export may contain personal data (IP addresses): keep it off public hosting and protect it at rest. See [Evidence Export](docs/EVIDENCE_EXPORT.md).
