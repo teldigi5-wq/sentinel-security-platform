@@ -126,3 +126,17 @@ jobs:
       - name: Execute database migration and concurrent ingestion regression
         working-directory: backend
         run: python -m pytest -q tests/test_postgres_integration.py
+
+  nonce-retention-guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install declared dependencies
+        run: python -m pip install -e './backend[test]'
+      - name: Verify backup-gated nonce retention (fixture only)
+        working-directory: backend
+        run: python -m pytest -o addopts='' -q tests/test_retention_guard.py
