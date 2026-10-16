@@ -1,0 +1,4 @@
+# NON-SECRET sensor metadata. This file must NOT contain signing keys.
+# Replace values to match backend SENTINEL_SENSOR_KEYS and SENTINEL_SENSOR_ASSETS.
+SENTINEL_SENSOR_ID=linux-ssh-01
+SENTINEL_ASSET_ID=host-01
