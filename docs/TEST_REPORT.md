@@ -26,3 +26,10 @@ Verified backend behavior:
 **Blocker:** frontend npm dependencies could not be installed; the environment could not resolve `registry.npmjs.org` (`EAI_AGAIN`). The local Next.js source requires `npm install`, `npm run typecheck`, `npm run build`, and real browser inspection when package registry access is available. No fabricated build or CI pass is claimed.
 
 The test count and result are local observations only. GitHub CI is defined but has not been executed in a remote repository.
+
+## Sentinel v0.2 — local triage verification
+
+- Local Python 3.13 / pytest 9 / FastAPI 0.128.2 / SQLAlchemy 2.0.50: **18 backend tests passed**, including the original baseline tests.
+- Added authentication checks, state transitions, decision history, input limits, stale-update rejection, CORS protections, integrity cross-checks and decision-tampering detection.
+- The updated dashboard TSX was parsed by local TypeScript 5.8.3 with zero syntax diagnostics. Full production build and browser E2E validation are **not claimed** until GitHub CI completes.
+- Real sensor integrations, adversarial testing, multi-user identity, migration rehearsal and production deployment are not part of this increment.
