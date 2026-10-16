@@ -45,3 +45,25 @@ The test count and result are local observations only. GitHub CI is defined but 
 **CI checks added:** bytecode compilation and `pip check` before regression suite, least-privilege job permissions and finite job timeouts. These are defined as required repository checks for PR review; actual remote success must be confirmed from the specific GitHub run before claiming it.
 
 **Not verified:** live distribution-specific logs, runtime privileges on deployment hosts, Windows support for this Linux-only sensor, real network enforcement, PostgreSQL migration, dependency vulnerability scan, large-scale throughput, live frontend cross-browser usage, or penetration-test qualification. Previous v0.2 CI claims are supported separately by that PR's recorded workflow run.
+
+
+## Sentinel v0.4 — per-operator authorization quality gate (local)
+
+**Date:** 2026-10-16. **Command:** `cd backend && python -m pytest -q`.
+
+**Observed local result: 35 tests passed** (includes v0.3 regression suite).
+The new tests verify individual operator identity, rejection of the legacy token when
+an operator mapping exists, viewer read-only access, analyst-attributed case decisions,
+admin-only audit-integrity inspection, and strict rejection of malformed or duplicate
+operator enrollment records. The existing signed sensor ingestion and evidence tests
+remain enabled. Python compilation and TSX parser checks passed locally.
+
+**Not yet verified locally:** full frontend typechecking/build (npm dependencies
+not installed in this workspace), browser visual/accessibility behavior, MFA/SSO,
+authentication throttling, session expiry/revocation without API restart,
+production PostgreSQL multiwriter behavior, and public/remote deployment safety.
+A global Python `pip check` reported an unrelated pre-existing
+`moviepy`/`pillow` incompatibility in the shared environment, not a failure
+associated with Sentinel dependencies. Re-test using a clean CI environment.
+
+**Remote CI:** must be inspected after PR upload; do not claim it passed in advance.

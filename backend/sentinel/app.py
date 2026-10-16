@@ -19,7 +19,7 @@ from .audit import append_audit, decision_digest, verify_case_decisions, verify_
 from .detection import evaluate
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
 from .schemas import IncomingEvent, TriageRequest
-from .settings import Settings, load_settings
+from .settings import OperatorIdentity, Settings, load_settings
 
 def as_utc_iso(value: datetime) -> str:
     """SQLite omits timezone metadata; serialize recorded UTC moments correctly."""
@@ -52,7 +52,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.2.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.4.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
@@ -61,14 +61,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with session_factory() as session:
             yield session
 
-    def require_operator(authorization: Annotated[str | None, Header()] = None):
-        if not authorization or not authorization.startswith("Bearer ") or not hmac.compare_digest(
-            authorization[7:].encode(), settings.operator_token.encode()
-        ):
+    def require_operator(authorization: Annotated[str | None, Header()] = None) -> OperatorIdentity:
+        if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
-        return "operator"
+        token = authorization[7:]
+        if not 32 <= len(token) <= 256 or not token.isascii():
+            raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
+        if settings.operators:
+            fingerprint = hashlib.sha256(token.encode()).hexdigest()
+            matched = None
+            for operator in settings.operators:
+                if hmac.compare_digest(fingerprint, operator.token_sha256):
+                    matched = operator
+            if matched is not None:
+                return matched
+        elif settings.operator_token and hmac.compare_digest(token.encode(), settings.operator_token.encode()):
+            # Backward compatible *local-only* operation; cannot provide individual attribution.
+            return OperatorIdentity("operator", "admin", "")
+        raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
 
-    Operator = Annotated[str, Depends(require_operator)]
+    def require_analyst(operator: Annotated[OperatorIdentity, Depends(require_operator)]) -> OperatorIdentity:
+        if operator.role not in ("analyst", "admin"):
+            raise HTTPException(status_code=403, detail="Insufficient role")
+        return operator
+
+    def require_admin(operator: Annotated[OperatorIdentity, Depends(require_operator)]) -> OperatorIdentity:
+        if operator.role != "admin":
+            raise HTTPException(status_code=403, detail="Insufficient role")
+        return operator
+
+    Operator = Annotated[OperatorIdentity, Depends(require_operator)]
+    Analyst = Annotated[OperatorIdentity, Depends(require_analyst)]
+    Admin = Annotated[OperatorIdentity, Depends(require_admin)]
     DB = Annotated[Session, Depends(get_session)]
 
     @app.middleware("http")
@@ -131,6 +155,12 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"event_id": incoming.id, "new_alert_ids": alerts}
 
+    @app.get("/api/v1/session")
+    def operator_session(operator: Operator):
+        return {"operator_id": operator.operator_id, "role": operator.role,
+                "capabilities": {"triage": operator.role in ("analyst", "admin"),
+                                 "audit_integrity": operator.role == "admin"}}
+
     @app.get("/api/v1/overview")
     def overview(_: Operator, session: DB):
         events = session.scalar(select(func.count()).select_from(SecurityEvent)) or 0
@@ -178,7 +208,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "reason": row.reason, "decided_at": as_utc_iso(row.decided_at)} for row in decisions]
 
     @app.post("/api/v1/alerts/{alert_id}/transition")
-    async def transition_alert(alert_id: str, request: Request, _: Operator, session: DB):
+    async def transition_alert(alert_id: str, request: Request, operator: Analyst, session: DB):
         # Explicit streaming limit ensures untrusted reasons cannot create unbounded bodies.
         raw = bytearray()
         async for chunk in request.stream():
@@ -202,16 +232,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 raise HTTPException(status_code=404, detail="Alert not found")
             raise HTTPException(status_code=409, detail="Alert state changed; refresh before retrying")
         decision = AlertDecision(alert_id=alert_id, previous_state=instruction.expected_state,
-                                 new_state=instruction.new_state, reason=instruction.reason, actor="operator")
+                                 new_state=instruction.new_state, reason=instruction.reason, actor=operator.operator_id)
         session.add(decision)
         session.flush()
-        append_audit(session, settings.audit_key, actor="operator", action="alert.transition",
+        append_audit(session, settings.audit_key, actor=operator.operator_id, action="alert.transition",
                      resource=f"decision:{decision.id}:{decision_digest(decision)}")
         session.commit()
         return {"alert_id": alert_id, "state": instruction.new_state, "decision_id": decision.id}
 
     @app.get("/api/v1/audit/integrity")
-    def audit_integrity(_: Operator, session: DB):
+    def audit_integrity(_: Admin, session: DB):
         return {"valid": verify_chain(session, settings.audit_key) and verify_case_decisions(session),
                 "records": session.scalar(select(func.count()).select_from(AuditRecord)) or 0,
                 "assurance": "HMAC chain and triage cross-check; not externally anchored or immutable"}

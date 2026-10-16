@@ -1,6 +1,6 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.3.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.4.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
@@ -23,6 +23,17 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Wazuh/Suricata and general endpoint agents | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
+
+## Individual operator access (v0.4 development)
+
+The new optional `SENTINEL_OPERATORS` JSON environment mapping enrolls distinct
+`viewer`, `analyst` and `admin` identities using SHA-256 digests of generated
+high-entropy bearer tokens. It disables legacy shared-token fallback when configured.
+The server enforces triage and audit permissions and attributes decisions to the
+actual enrolled operator ID. See [identity and access](docs/IDENTITY_AND_ACCESS.md).
+This is **not** MFA, SSO, or Internet-safe user management; it is a local MVP
+improvement, not an enterprise identity solution. `GET /api/v1/session` returns
+non-secret role and capability details for the dashboard.
 
 ## Architecture
 
@@ -152,7 +163,7 @@ Sensor signing algorithm: `HMAC_SHA256(sensor_secret, UTF8(sensor_id + "\\n" + u
 
 ## Security and operational limits
 
-**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept uses one shared operator bearer credential (no per-person attribution) and has no MFA, general-purpose endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit integrity check also cross-checks stored incident decision payloads and current case status, but it remains vulnerable to full DB/key compromise and truncation. The open-core server currently assumes single-process local deployment. The state-based compare-and-set check prevents most stale updates but is not a substitute for versioned concurrency control under adversarial workloads. Existing local databases add the new `alert_decisions` table through startup bootstrap; production migration management is not yet provided. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
+**Do not connect unreviewed production devices or expose these endpoints publicly.** This proof of concept supports per-operator credentials with role-based permissions, but still permits one shared **legacy local-only** operator token when no individual enrollment mapping is configured; it has no MFA, general-purpose endpoint agent, network packet capture, advanced rate limiting, key lifecycle, robust multitenant isolation, independent tamper-proof audit storage, background queue or high-availability architecture. The audit integrity check also cross-checks stored incident decision payloads and current case status, but it remains vulnerable to full DB/key compromise and truncation. The open-core server currently assumes single-process local deployment. The state-based compare-and-set check prevents most stale updates but is not a substitute for versioned concurrency control under adversarial workloads. Existing local databases add the new `alert_decisions` table through startup bootstrap; production migration management is not yet provided. Review [the threat model](docs/THREAT_MODEL.md) for additional gaps.
 
 ## Planned, not implemented
 
