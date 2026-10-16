@@ -24,6 +24,17 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
 
+## Individual operator access (v0.4 development)
+
+The new optional `SENTINEL_OPERATORS` JSON environment mapping enrolls distinct
+`viewer`, `analyst` and `admin` identities using SHA-256 digests of generated
+high-entropy bearer tokens. It disables legacy shared-token fallback when configured.
+The server enforces triage and audit permissions and attributes decisions to the
+actual enrolled operator ID. See [identity and access](docs/IDENTITY_AND_ACCESS.md).
+This is **not** MFA, SSO, or Internet-safe user management; it is a local MVP
+improvement, not an enterprise identity solution. `GET /api/v1/session` returns
+non-secret role and capability details for the dashboard.
+
 ## Architecture
 
 ```text

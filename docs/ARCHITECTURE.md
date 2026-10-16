@@ -82,3 +82,17 @@ An explicit file-based Linux SSH collector provides the first non-synthetic tele
 ## Hardware economics
 
 The core runs locally without mandatory hosted services or model APIs. Continuous availability requires an always-on host, electricity, networking, storage, sensor installation, operations and monitoring. Large monitoring systems and local language models are optional components with substantial resource demands.
+
+## ADR-008: v0.4 individually enrolled bearer identities and RBAC
+
+A private `SENTINEL_OPERATORS` mapping enrolls individual random bearer tokens by SHA-256
+fingerprint and explicit `viewer`/`analyst`/`admin` role. When present, the mapping
+disables shared-token authentication entirely. The backend enforces each endpoint's
+role; frontend navigation reflects server-reported capabilities but is not a policy
+boundary. Case decisions are attributed to the enrolled operator ID and bound to
+the local HMAC audit chain. The legacy shared token is still supported **only** for
+controlled local backward compatibility with the old environment configuration.
+
+This is a transitional, manually managed local model without MFA, SSO, expiring
+sessions, dedicated authentication datastore, or remote-user protections. No claim
+of enterprise IAM qualification is made.
