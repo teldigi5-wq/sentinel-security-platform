@@ -66,3 +66,16 @@ class AuditRecord(Base):
     resource: Mapped[str] = mapped_column(String(140), nullable=False)
     previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+ 
+class AlertDecision(Base):
+    """Operator incident state changes, stored independently from the mutable alert row."""
+    __tablename__ = "alert_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_id: Mapped[str] = mapped_column(String(36), ForeignKey("alerts.id"), nullable=False)
+    previous_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    new_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(String(300), nullable=False)
+    actor: Mapped[str] = mapped_column(String(96), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("idx_decisions_alert_time", "alert_id", "decided_at"),)
