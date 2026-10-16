@@ -66,3 +66,48 @@ class AuditRecord(Base):
     resource: Mapped[str] = mapped_column(String(140), nullable=False)
     previous_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+
+
+class AlertDecision(Base):
+    """Operator incident state changes, stored independently from the mutable alert row."""
+    __tablename__ = "alert_decisions"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    alert_id: Mapped[str] = mapped_column(String(36), ForeignKey("alerts.id"), nullable=False)
+    previous_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    new_state: Mapped[str] = mapped_column(String(20), nullable=False)
+    reason: Mapped[str] = mapped_column(String(300), nullable=False)
+    actor: Mapped[str] = mapped_column(String(96), nullable=False)
+    decided_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    __table_args__ = (Index("idx_decisions_alert_time", "alert_id", "decided_at"),)
+
+
+class AuditHead(Base):
+    """Single serialized tail pointer (not an independent immutable audit anchor)."""
+    __tablename__ = "audit_heads"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    last_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    entry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class OperatorCredential(Base):
+    """Local-administered, independently revocable high-entropy operator tokens."""
+    __tablename__ = "operator_credentials"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(12), nullable=False)
+    token_sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (Index("idx_operator_credentials_operator", "operator_id"),)
+
+
+class SensorStatus(Base):
+    """Server-observed coverage signals, not assertions of device integrity."""
+    __tablename__ = "sensor_status"
+    sensor_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    heartbeat_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
