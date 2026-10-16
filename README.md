@@ -286,3 +286,13 @@ The authenticated `GET /api/v1/sensors` endpoint and dashboard **Sensor coverage
 ## v0.10 — Sensor-to-asset enrollment
 
 Set `SENTINEL_SENSOR_ASSETS` with a complete mapping from configured sensor IDs to approved asset IDs. Signed contacts claiming a different asset are rejected, and previously observed asset identities cannot silently change. Unconfigured local labs retain **trust-on-first-contact** pinning only, which is not administrator-approved enrollment. Coverage shows `never_seen`, stale gaps, expected assets, and binding mode. See [Sensor Enrollment](docs/SENSOR_ENROLLMENT.md). This is not endpoint attestation.
+
+
+## v0.11 — Read-only operational coverage monitor
+
+Sentinel now provides a localhost-only, viewer-authenticated sensor coverage
+probe with fail-closed health-gap reporting. The optional command-line JSON
+report contains only aggregate counts; exit codes distinguish **healthy (0)**,
+**coverage gap (2)**, and **unknown / failure (1)**. It does not send alerts,
+modify incident records, or enforce network responses.
+See [operator instructions](docs/OPERATIONAL_COVERAGE_MONITOR.md).
