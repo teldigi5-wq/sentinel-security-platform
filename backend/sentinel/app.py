@@ -95,6 +95,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     session_factory = sessionmaker(bind=engine, expire_on_commit=False)
     try:
         verify_schema(engine)
+        # Refuse to operate on evidence whose stored state fails authentication.
+        # Use one stable read snapshot: PostgreSQL defaults to READ COMMITTED,
+        # which could otherwise mix separate concurrent writer transactions.
+        with engine.connect() as connection:
+            if engine.dialect.name == "postgresql":
+                connection = connection.execution_options(isolation_level="REPEATABLE READ")
+            with connection.begin():
+                with Session(bind=connection) as preflight:
+                    event_valid, _legacy_count = verify_event_evidence(preflight)
+                    integrity_valid = (verify_chain(preflight, settings.audit_key)
+                                       and verify_case_decisions(preflight)
+                                       and event_valid)
+                    if not integrity_valid:
+                        raise RuntimeError("Sentinel evidence integrity check failed at startup; "
+                                           "stop the service and investigate or restore a verified backup")
     except Exception:
         engine.dispose()
         raise
