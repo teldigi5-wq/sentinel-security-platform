@@ -1,4 +1,4 @@
-# Sentinel v0.3 — architectural decision record
+# Sentinel v0.4 — architectural decision record
 
 ## Mission and guarantees
 
@@ -37,7 +37,7 @@ Small, typed modules and explicit boundaries make security reasoning, integratio
 
 ## ADR-002: SQLite for development, PostgreSQL for future multi-user work
 
-SQLite minimizes mandatory services. SQLAlchemy supports a PostgreSQL driver, but migrations, concurrency controls, backups and HA are **not complete**. Initial work is single-operator/single-process. Starting multiple ingestion workers risks duplicate detectors and competing audit writers.
+SQLite minimizes mandatory services. SQLAlchemy supports a PostgreSQL driver, but migrations, concurrency controls, backups and HA are **not complete**. Initial work is single-process with optional individually enrolled operator roles. Starting multiple ingestion workers risks duplicate detectors and competing audit writers.
 
 ## ADR-003: deterministic alerts
 
@@ -52,7 +52,7 @@ There is currently no behavior-modeling claim and **no attacker attribution**. S
 
 ## ADR-004: private operator interface
 
-The Next.js UI requests an operator credential interactively, keeping it only in volatile React state. The backend validates its bearer token using constant-time comparison and deliberately disables interactive API documentation. No server secret may be included in `NEXT_PUBLIC_*`. This is a single-operator MVP credential, not enterprise IAM, SSO, MFA, key rotation or RBAC.
+The Next.js UI requests an operator credential interactively, keeping it only in volatile React state. The backend validates its bearer token using constant-time comparison and deliberately disables interactive API documentation. No server secret may be included in `NEXT_PUBLIC_*`. v0.4 optionally authenticates individually enrolled role-bearing tokens, but this is still not enterprise IAM, SSO, MFA, key rotation or remote-user security.
 
 ## ADR-005: trusted audits with limitations
 
@@ -60,7 +60,7 @@ Audit entries are HMAC-chained. Case decisions are committed alongside audit ref
 
 ## ADR-006: operator triage is not automated response
 
-Only explicitly authenticated operators can change an alert from open to investigating, from investigating to resolved, or from resolved back to investigating. Changes require a rationale and are persisted with a decision history entry and audit binding. A conditional SQL update guards against most stale-state updates and returns HTTP 409 on conflict. The current shared credential cannot attribute a decision to an individual person; SSO/MFA, per-operator identities, versioned concurrency and stronger audit anchoring are future work. No network, endpoint or identity enforcement is exposed by this API.
+Only explicitly authenticated operators can change an alert from open to investigating, from investigating to resolved, or from resolved back to investigating. Changes require a rationale and are persisted with a decision history entry and audit binding. A conditional SQL update guards against most stale-state updates and returns HTTP 409 on conflict. Configured per-operator credentials attribute decisions to individual operator IDs; the deprecated shared credential cannot. SSO/MFA, short-lived tokens, versioned concurrency and stronger audit anchoring remain future work. No network, endpoint or identity enforcement is exposed by this API.
 
 
 ## ADR-007: Least-privilege Linux SSH log sensor
