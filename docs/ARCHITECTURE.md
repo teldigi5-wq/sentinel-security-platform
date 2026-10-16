@@ -104,3 +104,10 @@ The API now **refuses to start** unless the Alembic revision is exactly `0002_au
 All ingestion and case state changes acquire an audit head lock **before** writing dependent records. PostgreSQL uses a row-level `FOR UPDATE` lock; SQLite acquires a database write lock through a no-op update. Each event, decision and audit tail update is part of the same transaction; rollback undoes all of them. The local audit integrity checker verifies hash chaining plus audit head count and tail to detect certain deletions/forks. This is not an immutable/off-host log, and a compromised DB plus key can still forge history. Long-held locks limit throughput: this design prioritizes correctness for a small local SOC over high ingestion rates. Benchmark and introduce a durable queue before enterprise-scale deployment.
 
 The PostgreSQL integration test runs only when a dedicated test database URL is supplied. Deployment must explicitly enable PostgreSQL support and validate backup/restore, operational privileges, rollback and resource pressure.
+
+
+## ADR-010: SQLite recovery safety (v0.6)
+
+The SQLite-only recovery utility uses the SQLite online backup API rather than copying the database file directly. The resulting *snapshot* is validated for SQLite integrity, Alembic revision, HMAC-linked audit records and case history. A SHA-256 checksum and HMAC-authenticated manifest bind the backed-up bytes to the observed audit tail. Restore performs full verification before publication to a new target, using a private temporary file and no-replace hard link; existing files are never replaced. On POSIX, created files and directories are synced where supported.
+
+Trust boundaries: local administrator, private filesystem location and separately protected audit key. Neither a database administrator who also possesses the key nor a compromised host can be reliably excluded by this mechanism. Backups do not provide encryption, off-site resilience, tamperproof external anchoring, scheduled retention, automatic failover, tested RPO/RTO, nor PostgreSQL recovery. Restore requires an operator-enforced offline maintenance window.

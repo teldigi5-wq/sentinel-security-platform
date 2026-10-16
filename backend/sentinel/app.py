@@ -57,7 +57,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.5.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.6.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
