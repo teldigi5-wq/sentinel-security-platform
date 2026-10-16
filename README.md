@@ -342,3 +342,13 @@ The frontend's `package-lock.json` was retrieved from the successful v0.19 GitHu
 ## v0.22 — Stored event payload integrity (release-candidate draft)
 
 New sensor ingestions bind the **persisted normalized event fields** (including server receipt time) into a versioned digest inside the transactional HMAC audit chain. Audit verification, SQLite backup and offline nonce maintenance check that new event rows still match their original audit references. Older events remain unanchored and are explicitly labeled `partial_legacy`; their contents cannot be retroactively authenticated. No external immutable evidence anchoring, sensor attestation or production certification is claimed. See [Event payload integrity](docs/EVENT_PAYLOAD_INTEGRITY.md).
+
+### v0.24 — Runtime evidence-integrity signal (development candidate)
+
+The viewer-scoped, minimal `/api/v1/audit/status` endpoint and the localhost-only
+`python -m scripts.check_audit_integrity --token-file /absolute/path --json`
+probe can report post-startup database evidence changes. Exit `0` means valid,
+nonempty, v0.22-anchored evidence; exit `2` means a gap/degraded state; exit `1`
+means unknown. This does **not** install a monitoring service, attest actual
+Linux-host protection, or replace operator/incident review. See
+[Runtime integrity monitoring](docs/RUNTIME_INTEGRITY_MONITOR.md).
