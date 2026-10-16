@@ -323,3 +323,13 @@ for an isolated signed-telemetry, lost-ACK replay, log rotation, simulated
 outage/recovery and audit-integrity drill. A failing phase produces nonzero exit.
 This does **not** qualify systemd, a real Linux host, or real attack-detection
 accuracy. See [Linux Recovery Drill](docs/LINUX_RECOVERY_DRILL.md).
+
+## v0.15 — Read-only Linux runtime observation
+
+For authorized Linux hosts, the new `python -m scripts.observe_linux_host` command
+checks the actual systemd unit's running/unprivileged state and verifies the specific
+explicitly enrolled sensor's recent contact using a private viewer token against the
+localhost-only API. It emits a scrubbed, non-overwriting `0600` evidence report and
+returns distinct exit codes for pass, gap, or indeterminate failure. This is a
+**current-state observation**, not a reboot, restart, rotation or complete host
+security certification. See [Linux runtime observation](docs/LINUX_RUNTIME_OBSERVATION.md).

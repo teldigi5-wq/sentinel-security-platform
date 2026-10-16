@@ -309,3 +309,13 @@ Local qualification: existing backend tests and new asset-enrollment authorizati
   network timing, host security posture, field false-positive metrics.
 - This is an **isolated fixture qualification** and must not be presented as
   a real Linux host test or production security certification.
+
+## v0.15 — Runtime observation quality gate
+
+Fixture tests cover fixed systemctl argument/timeout/environment selection,
+service identity and PID mismatch, stale or unenrolled sensor rejection,
+malformed or oversized output, systemctl failure, missing sensor, malicious nested
+coverage data, private token handling, no-overwrite evidence, and no secret leakage.
+The full backend regression suite is required. Passing mocked systemd tests and
+GitHub CI is **not** a live-host deployment qualification; no administrator-approved
+installation/reboot/outage exercises have been recorded.

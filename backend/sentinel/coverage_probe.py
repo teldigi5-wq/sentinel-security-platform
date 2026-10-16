@@ -30,6 +30,7 @@ class CoverageAssessment:
     never_seen: int
     explicitly_enrolled: int
     gaps: tuple[str, ...]
+    sensor_states: tuple[tuple[str, str, str], ...] = ()
 
     @property
     def clear(self) -> bool:
@@ -59,14 +60,17 @@ def assess(payload: object) -> CoverageAssessment:
     gaps: list[str] = []
     ids: set[str] = set()
     explicit = 0
+    states: list[tuple[str, str, str]] = []
     for entry in sensors:
         if not isinstance(entry, dict):
             raise CoverageProbeError("Invalid sensor entry")
         identifier, state, mode = entry.get("sensor_id"), entry.get("status"), entry.get("binding_mode")
         if (not isinstance(identifier, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", identifier)
-                or identifier in ids or state not in VALID_STATES or mode not in {"explicit", "first_contact"}):
+                or identifier in ids or not isinstance(state, str) or state not in VALID_STATES
+                or not isinstance(mode, str) or mode not in {"explicit", "first_contact"}):
             raise CoverageProbeError("Invalid sensor identity or coverage state")
         ids.add(identifier)
+        states.append((identifier, state, mode))
         totals[state] += 1
         if mode == "explicit":
             explicit += 1
@@ -81,7 +85,8 @@ def assess(payload: object) -> CoverageAssessment:
         raise CoverageProbeError("Coverage summary does not match sensor inventory")
     return CoverageAssessment(
         configured=len(sensors), healthy=totals["healthy"], stale=totals["stale"],
-        never_seen=totals["never_seen"], explicitly_enrolled=explicit, gaps=tuple(sorted(gaps)))
+        never_seen=totals["never_seen"], explicitly_enrolled=explicit, gaps=tuple(sorted(gaps)),
+        sensor_states=tuple(sorted(states)))
 
 
 def read_private_token(path: Path) -> str:
