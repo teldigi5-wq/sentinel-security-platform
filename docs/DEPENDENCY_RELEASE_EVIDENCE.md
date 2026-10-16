@@ -1,54 +1,28 @@
-# Dependency release evidence — v0.19
+# Dependency release evidence — v0.20
 
-**Status:** integration candidate, not a locked or production-certified release.
+**Status:** integration candidate with a committed frontend lock, not a production-certified release.
 
-## Security assumptions
+## Verified GitHub Actions provenance
 
-GitHub Actions now reference full commit SHAs verified against the upstream Git refs on
-2026-10-16: `actions/checkout` v4, `actions/setup-python` v5, `actions/setup-node` v4,
-and `actions/upload-artifact` v4. This avoids silent tag movement *between reviews*.
-A pinned SHA is a content reference, not a guarantee that an upstream action is
-safe. Review action provenance and release notes before repinning.
+- Source run: [`38883189383`](https://github.com/teldigi5-wq/sentinel-security-platform/actions/runs/38883189383), completed successfully on commit `d4f93240cfda96bc5a594cab23f39106322cc4aa` (October 16, 2026).
+- Downloaded artifact ID `12037524902`, `sentinel-frontend-candidate-lock`, from that run.
+- Extracted `package-lock.json` unchanged and reviewed its package manifest consistency, full version resolutions, registry URLs, and subresource integrity fields.
+- Committed lockfile SHA-256: `9dc3ef0b8ba19d3a817fbf2ae3b672c24d8a281e0023c8327541cb51996ef253`.
+- Node 22, npm v3 lockfile schema; dependency tree contains 60 packages plus root. Top-level `package.json` and the lockfile root match exactly.
+- All 60 package entries use `https://registry.npmjs.org/` and declare SRI integrity hashes. This is a structural/provenance review, **not** an independent malware or vulnerability audit.
 
-The workflow uses `permissions: contents: read` for its token and does not
-publish repository changes from CI. Permissions for the connected GitHub App
-are separate from the workflow's GITHUB_TOKEN.
+## Current continuous-integration behavior
 
-## Frontend: candidate lock, not a committed lock
+- `frontend/scripts/verify-lockfile.mjs` rejects a mismatched root package, unapproved resolution URLs, missing hashes, direct-dependency omissions, and lockfile symlinks. The tool does not contact the registry or silently repair the lockfile.
+- Frontend CI verifies the committed file, runs `npm ci --no-audit --no-fund` and `npm ls --depth=0`, then type-checks and builds the application.
+- Generating a new ephemeral lockfile during CI has been removed. Changes to dependency versions require a reviewed lockfile PR. A CI green result is not a guarantee of a bit-identical compiled application across different OS/Node versions.
+- GitHub Actions continue to run with `permissions: contents: read` and SHA-pinned third-party actions. No workflow may write to the repository.
 
-The frontend currently declares semver ranges and **does not yet commit**
-`frontend/package-lock.json`. Until review, CI:
+## Remaining release blockers
 
-1. Runs `npm install --package-lock-only --ignore-scripts --no-audit --no-fund` using Node 22.
-2. Installs from that same run's resolved lock with `npm ci --no-audit --no-fund`.
-3. Uploads the exact candidate lockfile as a seven-day artifact named
-   `sentinel-frontend-candidate-lock`.
-4. Runs TypeScript checks and a production build.
+- The **Python** application still uses version ranges and needs a reviewed constraints/lock strategy covering production, tests and PostgreSQL extras.
+- Dependency advisories and licensing must be reviewed independently; this update **does not claim zero vulnerabilities**. The previous CI used `--no-audit` and the new CI retains that flag to avoid failures from registry audit access.
+- Linux real-host install, restart/reboot, log rotation, sensor outage and credential recovery still lack signed-off host evidence.
+- PR #1 and the v0.2–v0.20 stacked chain must be reviewed and merged in dependency order, with CI rerun on the resultant main branch.
 
-This prevents the install step from resolving versions *differently within one
-run*, and exposes its dependency tree for inspection. It **does not** make
-separate CI runs reproducible; each run can choose newer transitive dependencies.
-The absence of `--audit` saves CI registry calls, but is **not** a vulnerability
-assessment. npm lifecycle scripts can execute during `npm ci`; review their
-provenance before release.
-
-## Review before integrating to main
-
-- Download `sentinel-frontend-candidate-lock` from one successful GitHub Actions run.
-- Review the lockfile's direct/transitive packages, integrity hashes, registry
-  domains, dependency licenses, vulnerability advisories, and compatibility.
-- Commit the reviewed `frontend/package-lock.json` unchanged in a separate PR.
-- Replace the candidate-generation step with a *strict* `npm ci` that fails if the
-  committed lock and manifest differ. Keep static typecheck, production build,
-  and existing CI jobs.
-- Retest on a clean checkout and document the reviewed lock SHA-256 and CI run URL.
-- Create a separately reviewed Python constraints/lock strategy, including extras
-  for PostgreSQL and test tools; `backend/pyproject.toml` still uses version ranges.
-
-## Qualification boundaries
-
-A green v0.19 CI result establishes action-reference hygiene and a recorded
-frontend dependency resolution, **not** end-to-end reproducible builds, release
-artifact provenance, dependency vulnerability clearance, Linux-host qualification,
-or authorization for autonomous security operations. Do not merge the stacked
-security PRs based only on this check.
+**Scope:** development reproducibility hardening only; not SOC production qualification, attacker attribution, or automated containment.
