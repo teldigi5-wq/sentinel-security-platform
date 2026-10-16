@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "sentinel-security-core"
-version = "0.1.0"
+version = "0.3.0"
 description = "Local-first, evidence-driven security event and detection core"
 requires-python = ">=3.11"
 dependencies = [

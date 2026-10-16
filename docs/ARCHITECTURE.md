@@ -1,13 +1,13 @@
-# Sentinel v0.2 — architectural decision record
+# Sentinel v0.3 — architectural decision record
 
 ## Mission and guarantees
 
-A local-first security operations foundation. Evidence is collected by named sensors using signed, replay-resistant messages. Deterministic detection produces traceable, inspectable alerts. The operator dashboard requires a separate credential and supports recorded case decisions; it cannot execute containment or firewall actions. **There is no offensive module, autonomous remediation, firewall management or active network prevention in this version.**
+A local-first security operations foundation. Evidence is collected by named sensors using signed, replay-resistant messages. Deterministic detection produces traceable, inspectable alerts. The operator dashboard requires a separate credential and now supports logged case-state decisions; it cannot execute containment or firewall actions. **There is no offensive module, autonomous remediation, firewall management or active network prevention in this version.**
 
 ## Deployed logical components
 
 ```text
-[Lab event emitter / future authorized endpoint adapter]
+[Lab emitter / opt-in read-only Linux SSH log collector]
                |
     HMAC-SHA256, time + nonce, bounded JSON
                v
@@ -56,17 +56,24 @@ The Next.js UI requests an operator credential interactively, keeping it only in
 
 ## ADR-005: trusted audits with limitations
 
-Audit entries are HMAC-chained. Case decisions are committed with an audit reference containing a SHA-256 digest of the stored decision. Integrity verification checks decision history and current alert states against those references and the signed audit chain. The integrity check catches edits to a retained chain provided the key remains trustworthy. This alone does **not** prevent deletion, total replacement, rollback, truncation, server compromise or malicious write access. Multiwriter safety, immutable external anchors, independent storage, retention and rotation must be implemented before making forensic non-repudiation claims.
+Audit entries are HMAC-chained. Case decisions are committed alongside audit references containing SHA-256 digests of the decision contents. Integrity verification checks decision histories and current alert state against these references, plus the signed audit chain. The integrity check catches edits to a retained chain provided the key remains trustworthy. This alone does **not** prevent deletion, total replacement, rollback, truncation, server compromise or malicious write access. Multiwriter safety, immutable external anchors, independent storage, retention and rotation must be implemented before making forensic non-repudiation claims.
 
 ## ADR-006: operator triage is not automated response
 
-Only a valid operator can progress an alert open → investigating → resolved and reopen it for investigation. Each change requires a rationale recorded with a digest-bound audit reference. State-conditional database updates reject most stale submissions with HTTP 409. A shared token does not provide per-person attribution, and state-based compare-and-set does not replace versioned concurrency management. The triage endpoint cannot control endpoint agents, firewalls or identities.
+Only explicitly authenticated operators can change an alert from open to investigating, from investigating to resolved, or from resolved back to investigating. Changes require a rationale and are persisted with a decision history entry and audit binding. A conditional SQL update guards against most stale-state updates and returns HTTP 409 on conflict. The current shared credential cannot attribute a decision to an individual person; SSO/MFA, per-operator identities, versioned concurrency and stronger audit anchoring are future work. No network, endpoint or identity enforcement is exposed by this API.
+
+
+## ADR-007: Least-privilege Linux SSH log sensor
+
+An explicit file-based Linux SSH collector provides the first non-synthetic telemetry source. It reads only an operator-selected local regular file, refuses symlinks and unsafe permissions, extracts source IPs from a strictly limited SSHD failure format, and emits bounded HMAC-authenticated events **only to literal loopback**. Raw log lines, usernames and ports are never sent. First enrollment defaults to tailing the current file rather than backfilling historical records; controlled `--backfill` is explicit. It persists a private, atomic cursor with a per-log-generation random identifier; position-derived nonces allow a failed checkpoint to retry without a duplicate stored event. It refuses malformed state, incomplete or oversized records, insecure cursor permissions and failed transmissions instead of silently dropping them. No daemon/service installation or privileged defensive response is introduced.
+
+**Threat/accuracy limits:** syslog records can be spoofed by an actor who controls the source; a source IP is not attacker attribution. Authentication log access still requires host permissions. Parser coverage is narrow and distro-dependent. Timestamp is the UTC **collection time**, not necessarily the original SSH event time; backfilling historical logs can generate false bursts. Raw-file ingestion offers no guarantee of complete visibility under rapid log rotation or truncation; a true systemd journal reader with trustworthy cursor metadata and tested operating permissions is future work. The state directory must be on a trusted filesystem and should be writable by only one collector process. Local API HMAC authenticates the sensor, not the provenance of each originating log line.
 
 ## Planned phases, NOT IMPLEMENTED
 
 1. Migration-managed PostgreSQL and robust concurrent ingestion queue.
 2. Enrollment and key rotation, mTLS and OIDC with MFA.
-3. Agent adapters (Wazuh, Suricata, Zeek) with validated data contracts.
+3. General endpoint/network adapters (Wazuh, Suricata, Zeek), agent enrollment and event-source provenance with validated contracts.
 4. Threat-intelligence enrichment and evidence-based relationship graph.
 5. Read-only AI incident copilot with deterministic tools, adversarial evaluation and no implicit authority.
 6. Approval-gated firewall/endpoint enforcement with rollback and operator supervision.
