@@ -46,3 +46,5 @@ python -m pytest -q
 ```
 
 A green CI result establishes automated acceptance on the tested commit only. It is **not** evidence of production readiness or protection of a real machine.
+
+CI entrypoint regression: v0.18 fixed a previously missing `scripts.benchmark_detection` job target by invoking the repository's actual `scripts.benchmark_quality` entry point. The integration test now validates every `python -m scripts.*` workflow target against the checked-out files; only a successful fresh CI run can qualify this correction.
