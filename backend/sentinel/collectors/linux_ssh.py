@@ -217,6 +217,60 @@ def send_signed(*, raw: bytes, nonce: str, sensor_id: str, sensor_key: str, host
         connection.close()
 
 
+def read_private_sensor_key(path: Path) -> str:
+    """Load a dedicated, user-owned 0600 secret without following symlinks.
+
+    The signing key must not be supplied in the service's command line,
+    unit EnvironmentFile, or committed repository files.
+    """
+    if not path.is_absolute():
+        raise CollectorError("Sensor key location must be an absolute path")
+    if not hasattr(os, "O_NOFOLLOW"):
+        raise CollectorError("This platform cannot safely open sensor key files")
+    flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    try:
+        fd = os.open(path, flags | getattr(os, "O_NONBLOCK", 0))
+        try:
+            info = os.fstat(fd)
+            if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+                    or info.st_mode & 0o077):
+                raise CollectorError("Sensor key must be an owned, private regular file")
+            with os.fdopen(fd, "rb") as stream:
+                fd = -1
+                raw = stream.read(513)
+        finally:
+            if fd >= 0:
+                os.close(fd)
+    except OSError as exc:
+        raise CollectorError("Sensor key file cannot be read securely") from exc
+    if len(raw) > 512:
+        raise CollectorError("Sensor key file is oversized")
+    try:
+        key = raw.decode("ascii").removesuffix("\n")
+    except UnicodeError as exc:
+        raise CollectorError("Sensor key encoding is invalid") from exc
+    if (not 32 <= len(key) <= 256 or not re.fullmatch(r"[A-Za-z0-9_~.\-]+", key)):
+        raise CollectorError("Sensor key format is invalid")
+    return key
+
+
+def resolve_sensor_key(*, key_file: Path | None, sensor_id: str, environ: dict[str, str]) -> str:
+    """Fail closed if both secret sources are selected or neither is configured."""
+    supplied = environ.get("SENTINEL_SENSOR_KEYS", "").strip()
+    if key_file is not None:
+        if supplied:
+            raise CollectorError("Conflicting key sources: unset SENTINEL_SENSOR_KEYS when using a key file")
+        return read_private_sensor_key(key_file)
+    try:
+        config = json.loads(supplied or "{}")
+    except json.JSONDecodeError as exc:
+        raise CollectorError("Sensor key configuration is invalid") from exc
+    secret = config.get(sensor_id) if isinstance(config, dict) else None
+    if not isinstance(secret, str) or len(secret) < 32:
+        raise CollectorError("Configured sensor secret is missing")
+    return secret
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Read-only Linux SSH failure sensor (local API only)")
     parser.add_argument("--source", required=True, type=Path, help="Absolute /var/log/auth.log or /var/log/secure path")
@@ -224,6 +278,7 @@ def main() -> int:
     parser.add_argument("--asset", required=True, help="Stable local asset identifier")
     parser.add_argument("--sensor", required=True, help="Sensor id present in SENTINEL_SENSOR_KEYS")
     parser.add_argument("--port", type=int, default=8000)
+    parser.add_argument("--sensor-key-file", type=Path, help="Absolute path to a private, sensor-owned 0600 signing key")
     parser.add_argument("--follow", action="store_true", help="Continue polling; default runs once")
     parser.add_argument("--backfill", action="store_true", help="Opt in to historical records on first run; may create misleading bursts")
     parser.add_argument("--interval", type=float, default=5.0)
@@ -235,10 +290,8 @@ def main() -> int:
     if not 1 <= args.interval <= 60 or not 1 <= args.port <= 65535 or not 30 <= args.heartbeat_seconds <= 120:
         parser.error("Port and interval must be within safe bounds")
     try:
-        config = json.loads(os.environ.get("SENTINEL_SENSOR_KEYS", "{}"))
-        secret = config.get(args.sensor) if isinstance(config, dict) else None
-        if not isinstance(secret, str) or len(secret) < 32:
-            raise CollectorError("Configured sensor secret is missing")
+        secret = resolve_sensor_key(key_file=args.sensor_key_file, sensor_id=args.sensor,
+                                    environ=dict(os.environ))
         last_heartbeat = -float("inf")
         while True:
             count, accepted = process_file(
