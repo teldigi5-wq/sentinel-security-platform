@@ -21,11 +21,13 @@ const fixture = REAL_BACKEND ? JSON.parse(readFileSync(process.env.SENTINEL_E2E_
   admin: `admin-${'a'.repeat(42)}`,
 };
 const now = new Date().toISOString();
-const alert = {id: 'fixture-alert-01', severity: 'high', title: 'Fixture: repeated SSH failures',
-  explanation: 'Synthetic UI test record', asset_id: 'fixture-host', source_ip: '192.0.2.42',
+// Malicious-looking synthetic API input: it must remain inert literal text.
+const hostileText = '<img src=x onerror="window.__sentinel_injected=1">';
+const alert = {id: 'fixture-alert-01', severity: 'high', title: hostileText,
+  explanation: hostileText, asset_id: 'fixture-host', source_ip: '192.0.2.42',
   state: 'open', rule_id: 'fixture-rule', evidence_count: 1, created_at: now};
 const evt = {id: 'fixture-event-01', asset_id: 'fixture-host', sensor_id: 'fixture-sensor',
-  category: 'authentication', action: 'auth_failure', source_ip: '192.0.2.42', observed_at: now};
+  category: 'authentication', action: 'auth_failure', source_ip: hostileText, observed_at: now};
 
 function makeApi() {
   return createServer(async (req, res) => {
@@ -45,6 +47,8 @@ function makeApi() {
       '/api/v1/session': {operator_id: admin ? 'fixture-admin' : 'fixture-viewer',role: admin ? 'admin' : 'viewer', capabilities:{triage:admin,audit_integrity:admin}},
       '/api/v1/overview': {events:1,alerts:1,high_alerts:1,assets:1,mode:'read-only',defensive_enforcement:'not-installed'},
       '/api/v1/alerts': [alert],
+      '/api/v1/alerts/fixture-alert-01/evidence': [{event_id:evt.id,sensor_id:evt.sensor_id,action:evt.action,asset_id:evt.asset_id,source_ip:evt.source_ip,observed_at:evt.observed_at}],
+      '/api/v1/alerts/fixture-alert-01/history': [],
       '/api/v1/events': [evt],
       '/api/v1/sensors': {stale_after_seconds:180,assurance:'synthetic-only',summary:{configured:1,healthy:1,gaps:0,explicitly_enrolled:1},sensors:[{sensor_id:'fixture-sensor',asset_id:'fixture-host',expected_asset_id:'fixture-host',binding_mode:'explicit',status:'healthy',last_seen_at:now,last_event_at:now,heartbeat_count:1,event_count:1}]},
       '/api/v1/audit/integrity': {valid:true,records:4,assurance:'synthetic-fixture'},
@@ -127,6 +131,14 @@ function loginExpression(token){return `(async()=>{${wait}
   return true;
 })()`;}
 async function phase(name,fn){await fn();console.log(`PASS: ${name}`);}
+async function pressKey(browser,key,shift=false){
+  const vk={Tab:9,Enter:13,Escape:27}[key];
+  const params={key,code:key,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk,modifiers:shift?8:0};
+  await browser.send('Input.dispatchKeyEvent',key==='Enter'
+    ? {...params,type:'keyDown',text:'\r',unmodifiedText:'\r'}
+    : {...params,type:'rawKeyDown'});
+  await browser.send('Input.dispatchKeyEvent',{...params,type:'keyUp'});
+}
 
 async function exerciseBrowser() {
   const api=REAL_BACKEND?null:makeApi();let next=null;let browser=null;let tmp=null;
@@ -186,6 +198,26 @@ async function exerciseBrowser() {
       })()`);
       assert.equal(x.activePage,'page');assert.equal(x.eventVisible,true);assert.equal(x.table,true);assert.equal(x.triage,false);
     });
+    if(!REAL_BACKEND)await phase('Hostile telemetry rendered as inert text',async()=>{
+      const result=await browser.evaluate(`(async()=>{${wait}
+        const tab=[...document.querySelectorAll('nav button')].find(b=>b.textContent.trim()==='Investigations');
+        tab.click(); await until(()=>document.querySelector('.finding-name'),'alert missing');
+        const alertText=document.querySelector('.finding-name');
+        const literalTitle=alertText.textContent; const titleChildren=alertText.children.length;
+        document.querySelector('button[aria-label^="Review evidence for"]').click();
+        await until(()=>document.querySelector('.evidence-panel>p'),'alert detail missing');
+        const explanation=document.querySelector('.evidence-panel>p');
+        const literalExplanation=explanation.textContent;const detailChildren=explanation.children.length;
+        const eventTab=[...document.querySelectorAll('nav button')].find(b=>b.textContent.trim()==='Event intelligence');
+        eventTab.click();await until(()=>document.querySelector('h1')?.textContent==='Event intelligence','event tab missing');
+        return {literalTitle,titleChildren,literalExplanation,detailChildren,
+          literalSource:[...document.querySelectorAll('tbody td')].some(c=>c.textContent.includes(${JSON.stringify(hostileText)})),
+          injected:!!document.querySelector('img[onerror]'),executed:window.__sentinel_injected===1};
+      })()`);
+      assert.equal(result.literalTitle,hostileText);assert.equal(result.titleChildren,0);
+      assert.equal(result.literalExplanation,hostileText);assert.equal(result.detailChildren,0);
+      assert(result.literalSource);assert(!result.injected);assert(!result.executed);
+    });
     if(REAL_BACKEND)await phase('Real evidence links resolve through authenticated API',async()=>{
       const actual=await browser.evaluate(`(async()=>{${wait}
         const tab=[...document.querySelectorAll('nav button')].find(b=>b.textContent.includes('Alert intelligence')||b.textContent.includes('Alert register')||b.textContent.includes('Detection register'));
@@ -213,6 +245,24 @@ async function exerciseBrowser() {
       })()`);
       assert(x.open);assert.equal(x.expandedOpen,'true');assert.equal(x.expandedClosed,'false');assert(x.scrollWidth<=x.width+3,`Unexpected horizontal page overflow: ${x.scrollWidth} / ${x.width}`);
       assert.equal(x.navLabel,'Toggle navigation');
+    });
+    await phase('Keyboard-controlled mobile drawer focus and dismissal',async()=>{
+      await browser.evaluate(`document.querySelector('.mobile-menu').focus()`);
+      await pressKey(browser,'Enter');
+      const opened=await browser.evaluate(`(async()=>{${wait}
+        await until(()=>document.querySelector('.sidebar').classList.contains('sidebar-open'),'keyboard drawer missing');
+        return {focus:document.activeElement?.textContent.trim(),expanded:document.querySelector('.mobile-menu').getAttribute('aria-expanded')};
+      })()`);
+      assert.equal(opened.focus,'Overview'); assert.equal(opened.expanded,'true');
+      await pressKey(browser,'Tab',true);
+      assert.equal(await browser.evaluate(`document.activeElement?.classList.contains('signout')`),true);
+      await pressKey(browser,'Tab');
+      assert.equal(await browser.evaluate(`document.activeElement?.textContent.trim()`),'Overview');
+      await pressKey(browser,'Escape');
+      const closed=await browser.evaluate(`({isClosed:!document.querySelector('.sidebar').classList.contains('sidebar-open'),
+        menuFocus:document.activeElement===document.querySelector('.mobile-menu'),
+        expanded:document.querySelector('.mobile-menu').getAttribute('aria-expanded')})`);
+      assert(closed.isClosed&&closed.menuFocus);assert.equal(closed.expanded,'false');
     });
     await phase('Sign-out removes dashboard and memory-only token',async()=>{
       const x=await browser.evaluate(`(async()=>{${wait}
