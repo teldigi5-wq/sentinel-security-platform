@@ -36,6 +36,11 @@ jobs:
           python-version: '3.12'
       - name: Install isolated drill dependencies
         run: python -m pip install -c backend/constraints/py312-linux-ci.txt -e './backend[test]'
+      - name: Verify real systemd parser recognizes the shipped unit (syntax only)
+        working-directory: backend
+        run: |
+          python -m scripts.verify_linux_service_unit --json
+          python -m pytest -q tests/test_systemd_unit_verify.py
       - name: Exercise signed ingestion and recovery (fixture only)
         working-directory: backend
         run: python -m scripts.drill_linux_collector --json-out "$GITHUB_WORKSPACE/sentinel-isolated-drill.json"
