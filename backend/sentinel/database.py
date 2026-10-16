@@ -5,7 +5,7 @@ from alembic.config import Config
 from alembic.migration import MigrationContext
 from sqlalchemy.engine import Engine
 
-HEAD_REVISION = "0002_audit_head"
+HEAD_REVISION = "0003_operator_credentials"
 
 
 def alembic_config(url: str) -> Config:

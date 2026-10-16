@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .audit import append_audit, decision_digest, lock_audit_head, verify_case_decisions, verify_chain
 from .detection import evaluate
 from .database import verify_schema
-from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
+from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, OperatorCredential, utcnow
 from .schemas import IncomingEvent, TriageRequest
 from .settings import OperatorIdentity, Settings, load_settings
 
@@ -35,6 +35,10 @@ MAX_CLOCK_SKEW_SECONDS = 120
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    if settings.auth_mode not in ("static", "database"):
+        raise RuntimeError("Unsupported operator authentication mode")
+    if settings.auth_mode == "database" and (settings.operator_token or settings.operators):
+        raise RuntimeError("Database authentication forbids static operator credentials")
     if not settings.database_url.startswith(("sqlite:", "postgresql+psycopg:")):
         raise RuntimeError("Unsupported database scheme")
     engine = create_engine(settings.database_url, pool_pre_ping=True,
@@ -52,12 +56,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         engine.dispose()
         raise
 
+    if settings.auth_mode == "database":
+        with session_factory() as preflight:
+            active_admin = preflight.scalar(select(OperatorCredential.id).where(
+                OperatorCredential.role == "admin",
+                OperatorCredential.revoked_at.is_(None),
+                OperatorCredential.expires_at > utcnow(),
+            ).limit(1))
+            if active_admin is None:
+                engine.dispose()
+                raise RuntimeError("Database auth requires an active admin; enroll using the offline credential CLI")
+
     @asynccontextmanager
     async def lifespan(app: FastAPI):
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.6.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.7.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
@@ -66,13 +81,23 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         with session_factory() as session:
             yield session
 
-    def require_operator(authorization: Annotated[str | None, Header()] = None) -> OperatorIdentity:
+    def require_operator(session: Annotated[Session, Depends(get_session)],
+                         authorization: Annotated[str | None, Header()] = None) -> OperatorIdentity:
         if not authorization or not authorization.startswith("Bearer "):
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
         token = authorization[7:]
         if not 32 <= len(token) <= 256 or not token.isascii():
             raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
-        if settings.operators:
+        if settings.auth_mode == "database":
+            fingerprint = hashlib.sha256(token.encode()).hexdigest()
+            credential = session.scalar(select(OperatorCredential).where(
+                OperatorCredential.token_sha256 == fingerprint,
+                OperatorCredential.revoked_at.is_(None),
+                OperatorCredential.expires_at > utcnow(),
+            ))
+            if credential is not None:
+                return OperatorIdentity(credential.operator_id, credential.role, fingerprint)
+        elif settings.operators:
             fingerprint = hashlib.sha256(token.encode()).hexdigest()
             matched = None
             for operator in settings.operators:
@@ -80,7 +105,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                     matched = operator
             if matched is not None:
                 return matched
-        elif settings.operator_token and hmac.compare_digest(token.encode(), settings.operator_token.encode()):
+        elif settings.auth_mode == "static" and settings.operator_token and hmac.compare_digest(token.encode(), settings.operator_token.encode()):
             # Backward compatible *local-only* operation; cannot provide individual attribution.
             return OperatorIdentity("operator", "admin", "")
         raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})

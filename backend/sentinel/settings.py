@@ -21,13 +21,19 @@ class Settings:
     audit_key: str
     frontend_origins: tuple[str, ...]
     operators: tuple[OperatorIdentity, ...] = field(default_factory=tuple)
+    auth_mode: str = "static"
 
 
 def load_settings() -> Settings:
     operator = os.getenv("SENTINEL_OPERATOR_TOKEN", "")
     audit = os.getenv("SENTINEL_AUDIT_KEY", "")
     configured_operators = os.getenv("SENTINEL_OPERATORS")
-    if len(audit) < 32 or (configured_operators is None and len(operator) < 32):
+    auth_mode = os.getenv("SENTINEL_AUTH_MODE", "static")
+    if auth_mode not in ("static", "database"):
+        raise RuntimeError("SENTINEL_AUTH_MODE must be static or database")
+    if auth_mode == "database" and (operator or configured_operators is not None):
+        raise RuntimeError("Database auth mode forbids legacy/static operator credentials")
+    if len(audit) < 32 or (auth_mode == "static" and configured_operators is None and len(operator) < 32):
         raise RuntimeError("Set a strong audit key and either individual operators or a legacy operator token")
     operators: list[OperatorIdentity] = []
     if configured_operators is not None:
@@ -72,4 +78,5 @@ def load_settings() -> Settings:
         audit_key=audit,
         frontend_origins=origins,
         operators=tuple(operators),
+        auth_mode=auth_mode,
     )

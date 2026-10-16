@@ -1,4 +1,4 @@
-# Sentinel v0.5 — architectural decision record
+# Sentinel v0.7 — architectural decision record
 
 ## Mission and guarantees
 
@@ -99,7 +99,7 @@ of enterprise IAM qualification is made.
 
 ## ADR-009: migration-controlled schema, deterministic concurrent audits (v0.5)
 
-The API now **refuses to start** unless the Alembic revision is exactly `0002_audit_head`. No `Base.metadata.create_all` is invoked at runtime. New SQLite and PostgreSQL databases are initialized by an explicit Alembic `upgrade head`; a guarded legacy SQLite migration requires an audit-validated schema, current HMAC key, and a private backup. A failed migration must be investigated and restored from backup; migrations are not guaranteed online or reversible.
+The API now **refuses to start** unless the Alembic revision matches current head (`0003_operator_credentials` in v0.7). No `Base.metadata.create_all` is invoked at runtime. New SQLite and PostgreSQL databases are initialized by an explicit Alembic `upgrade head`; a guarded legacy SQLite migration requires an audit-validated schema, current HMAC key, and a private backup. A failed migration must be investigated and restored from backup; migrations are not guaranteed online or reversible.
 
 All ingestion and case state changes acquire an audit head lock **before** writing dependent records. PostgreSQL uses a row-level `FOR UPDATE` lock; SQLite acquires a database write lock through a no-op update. Each event, decision and audit tail update is part of the same transaction; rollback undoes all of them. The local audit integrity checker verifies hash chaining plus audit head count and tail to detect certain deletions/forks. This is not an immutable/off-host log, and a compromised DB plus key can still forge history. Long-held locks limit throughput: this design prioritizes correctness for a small local SOC over high ingestion rates. Benchmark and introduce a durable queue before enterprise-scale deployment.
 
@@ -111,3 +111,10 @@ The PostgreSQL integration test runs only when a dedicated test database URL is 
 The SQLite-only recovery utility uses the SQLite online backup API rather than copying the database file directly. The resulting *snapshot* is validated for SQLite integrity, Alembic revision, HMAC-linked audit records and case history. A SHA-256 checksum and HMAC-authenticated manifest bind the backed-up bytes to the observed audit tail. Restore performs full verification before publication to a new target, using a private temporary file and no-replace hard link; existing files are never replaced. On POSIX, created files and directories are synced where supported.
 
 Trust boundaries: local administrator, private filesystem location and separately protected audit key. Neither a database administrator who also possesses the key nor a compromised host can be reliably excluded by this mechanism. Backups do not provide encryption, off-site resilience, tamperproof external anchoring, scheduled retention, automatic failover, tested RPO/RTO, nor PostgreSQL recovery. Restore requires an operator-enforced offline maintenance window.
+
+
+## ADR-011: Database credentials and revocation (v0.7)
+
+The new optional `database` authentication mode uses per-operator 48-byte random bearer credentials identified only by SHA-256 fingerprints. An offline OS-authorized CLI enrolls, expires, revokes and rotates credentials with transactional audit events. Each HTTP request checks the current database credential record. Enabling database mode forbids both static enrollment and legacy shared-token fallback; API startup requires an active admin. Revocation and rotation do not require a restart. The last active admin cannot be revoked without a replacement.
+
+No MFA, OIDC, remote API exposure, external immutable audit anchor or remote credential-administration endpoint is claimed. Local DB administrators remain a high-trust boundary. Previously signed v0.6 SQLite backups can be restored to a fresh file but must be explicitly migrated before v0.7 API startup.

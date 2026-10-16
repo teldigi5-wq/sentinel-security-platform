@@ -133,3 +133,35 @@ def test_private_destination_parent_required(tmp_path):
     parent.chmod(0o777)
     with pytest.raises(ValueError, match='group/world writable'):
         create_backup(source, parent / 'backup', AUDIT)
+
+def test_v06_authenticated_backup_restores_then_migrates(tmp_path):
+    """Previous release's signed snapshot remains recoverable after schema upgrade."""
+    import shutil
+    from alembic import command
+    from sentinel.database import alembic_config, verify_schema
+    from sentinel.backup import FORMAT, _sign, _canonical, _hash_file
+    previous = tmp_path / "previous.db"
+    url = f"sqlite:///{previous}"
+    command.upgrade(alembic_config(url), "0002_audit_head")
+    directory = tmp_path / "backup-v06"
+    directory.mkdir(mode=0o700)
+    snapshot = directory / "snapshot.sqlite3"
+    shutil.copyfile(previous, snapshot)
+    os.chmod(snapshot, 0o600)
+    data = {"format": FORMAT, "created_at": "2026-10-16T00:00:00+00:00",
+            "database_sha256": _hash_file(snapshot), "schema_revision": "0002_audit_head",
+            "audit_entries": 0, "audit_head": "0"*64}
+    manifest = directory / "manifest.json"
+    manifest.write_bytes(_canonical({"data":data, "hmac_sha256":_sign(data,AUDIT)})+b"\n")
+    os.chmod(manifest,0o600)
+    assert verify_backup(directory,AUDIT)==data
+    restored=tmp_path / "restored-v06.db"
+    assert restore_backup(directory,restored,AUDIT)==data
+    engine=create_engine(f"sqlite:///{restored}")
+    with pytest.raises(RuntimeError,match="revision"):
+        verify_schema(engine)
+    engine.dispose()
+    migrate(f"sqlite:///{restored}")
+    engine=create_engine(f"sqlite:///{restored}")
+    verify_schema(engine)
+    engine.dispose()

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 from .audit import verify_case_decisions, verify_chain
 from .database import HEAD_REVISION, verify_schema
+from alembic.migration import MigrationContext
 from .models import AuditHead
 
 MANIFEST = 'manifest.json'
@@ -67,7 +68,7 @@ def _sign(fields: dict, key: str) -> str:
     return hmac.new(key.encode('utf-8'), _canonical(fields), hashlib.sha256).hexdigest()
 
 
-def _verified_snapshot(path: Path, audit_key: str) -> dict:
+def _verified_snapshot(path: Path, audit_key: str, *, revision: str = HEAD_REVISION) -> dict:
     """Validate the *copied* state, never trust an unverified source snapshot."""
     _regular_file(path)
     uri = f'file:{quote(str(path.absolute()), safe="/")}?mode=ro'
@@ -76,7 +77,15 @@ def _verified_snapshot(path: Path, audit_key: str) -> dict:
             raise ValueError('SQLite integrity check failed')
     engine = create_engine(f'sqlite:///{path}')
     try:
-        verify_schema(engine)
+        if revision == HEAD_REVISION:
+            verify_schema(engine)
+        elif revision == "0002_audit_head":
+            with engine.connect() as connection:
+                observed_revision = MigrationContext.configure(connection).get_current_revision()
+            if observed_revision != revision:
+                raise ValueError("Backup revision does not match its snapshot")
+        else:
+            raise ValueError("Unsupported snapshot database revision")
         with Session(engine) as session:
             if not verify_chain(session, audit_key) or not verify_case_decisions(session):
                 raise ValueError('Sentinel audit integrity verification failed')
@@ -161,11 +170,11 @@ def verify_backup(directory: Path, audit_key: str) -> dict:
         raise ValueError('Invalid manifest fields')
     if not hmac.compare_digest(_sign(data, audit_key), signature):
         raise ValueError('Manifest authentication failed')
-    if data['format'] != FORMAT or data['schema_revision'] != HEAD_REVISION:
+    if data['format'] != FORMAT or data['schema_revision'] not in (HEAD_REVISION, '0002_audit_head'):
         raise ValueError('Unsupported backup format or schema')
     if not hmac.compare_digest(data['database_sha256'], _hash_file(snapshot)):
         raise ValueError('Backup checksum mismatch')
-    observed = _verified_snapshot(snapshot, audit_key)
+    observed = _verified_snapshot(snapshot, audit_key, revision=data['schema_revision'])
     if observed != {k: data[k] for k in ('audit_entries', 'audit_head')}:
         raise ValueError('Audit head mismatch')
     return data
@@ -191,7 +200,7 @@ def restore_backup(directory: Path, destination: Path, audit_key: str) -> dict:
             os.fsync(out.fileno())
         if not hmac.compare_digest(_hash_file(temp), data['database_sha256']):
             raise ValueError('Restore copy checksum mismatch')
-        _verified_snapshot(temp, audit_key)
+        _verified_snapshot(temp, audit_key, revision=data['schema_revision'])
         # Atomic no-replace publication; fail closed on filesystems without hard-link support.
         os.link(temp, destination, follow_symlinks=False)
         _sync_directory(destination.parent)

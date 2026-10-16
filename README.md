@@ -1,6 +1,6 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.6.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.7.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
@@ -22,6 +22,7 @@ SENTINEL explores how security telemetry, deterministic rules, traceable inciden
 | Linux SSH authentication-log collector | Implemented; bounded, read-only, localhost-only | `backend/sentinel/collectors/linux_ssh.py`, integration tests |
 | Explicit database migrations + serialized audit head (v0.5) | Implemented locally; PostgreSQL qualification requires CI | `backend/migrations`, `backend/tests/test_migrations_audit.py` |
 | Signed SQLite backup, audit-verified snapshot and new-file offline recovery (v0.6) | Implemented in local test environment | `backend/sentinel/backup.py`, `backend/tests/test_backup_recovery.py` |
+| Opt-in expiring/revocable operator credentials (v0.7) | Implemented with offline local administration, no MFA or HTTP provisioning | `backend/sentinel/credential_lifecycle.py`, `backend/tests/test_credential_lifecycle.py` |
 | Wazuh/Suricata and general endpoint agents | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
@@ -218,3 +219,10 @@ Only claim features that pass reproducible tests and can be demonstrated from a 
 ## License
 
 **No license has been selected yet.** The author retains rights until a license is chosen. Adding a permissive open-source license should be an explicit repository-owner decision.
+
+
+## v0.7 — opt-in operator credential lifecycle
+
+Versioned database-backed operator credentials support up to 90-day token expiry, immediate server-side revocation and atomic rotation. They are **not** remote IAM/SSO/MFA; use only with the localhost API. Static v0.4 tokens continue to work in the default mode. Database mode disables static fallback, requires an enrolled active administrator and uses an offline local CLI, never an HTTP credential-administration API.
+
+After a private verified backup and Alembic upgrade, follow [local identity administration](docs/IDENTITY_AND_ACCESS.md) to enroll a new database admin and opt into `SENTINEL_AUTH_MODE=database`. Generated secret files must stay outside the source tree.
