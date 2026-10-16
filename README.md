@@ -1,29 +1,10 @@
 # SENTINEL — Evidence-Driven Security Operations
 
-**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.8.0 development branch**
+**Standalone · Local-first · Zero mandatory paid subscriptions · Pre-production v0.9.0 development branch**
 
 > **Implementation status:** a functioning local security event ingestion and detection core, operator dashboard source, and automated backend tests. **Not yet a complete SOC, EDR, antivirus, firewall, commercial security replacement, attacker-tracing tool or offensive platform.** No claim of enterprise certification or live network protection is made.
 
 SENTINEL explores how security telemetry, deterministic rules, traceable incident evidence and constrained AI-assisted investigation can evolve into a verifiable defense platform. This initial release deliberately has **no destructive, retaliatory or live network enforcement features**.
-
-## Synthetic detection qualification (v0.8)
-
-Run from backend after installing the declared test dependencies:
-
-```bash
-python -m scripts.benchmark_quality --json synthetic-quality-results.json
-```
-
-The benchmark exercises **real signed ingestion, deterministic detection, alert
-storage and audit verification** against a fresh temporary migrated SQLite
-database for each of 15 explicit positive/negative cases. It fails on missing
-or unexpected alerts. GitHub CI stores an ephemeral machine-readable report.
-
-**All reported precision, recall, false-positive scenario counts and in-process
-TestClient timings are synthetic regression measurements only.** They are not
-real-world detection rates, network or sensor latency, performance SLAs or claims
-of production readiness. A real-world labeled evaluation dataset and independent
-traffic capture benchmark remain necessary.
 
 ## What is actually implemented
 
@@ -39,12 +20,36 @@ traffic capture benchmark remain necessary.
 | Manual analyst incident triage | Implemented for local lab | Explicit state transitions, reasons, recorded decision history, tests |
 | Premium operator dashboard | CI production build passed in prior v0.4 PR; interactive accessibility not verified | `frontend/app` |
 | Linux SSH authentication-log collector | Implemented; bounded, read-only, localhost-only | `backend/sentinel/collectors/linux_ssh.py`, integration tests |
-| Explicit database migrations + serialized audit head (v0.5) | Implemented locally; PostgreSQL qualification requires CI | `backend/migrations`, `backend/tests/test_migrations_audit.py` |
-| Signed SQLite backup, audit-verified snapshot and new-file offline recovery (v0.6) | Implemented in local test environment | `backend/sentinel/backup.py`, `backend/tests/test_backup_recovery.py` |
-| Opt-in expiring/revocable operator credentials (v0.7) | Implemented with offline local administration, no MFA or HTTP provisioning | `backend/sentinel/credential_lifecycle.py`, `backend/tests/test_credential_lifecycle.py` |
+| Explicit database migrations + serialized audit head (v0.5) | Implemented; PostgreSQL qualification through dedicated CI | `backend/migrations`, `backend/tests/test_migrations_audit.py` |
+| Signed SQLite backup, integrity verification and new-file offline restore (v0.6) | Implemented for local SQLite only; v0.6 backup restore compatibility tested | `backend/sentinel/backup.py`, `backend/tests/test_backup_recovery.py` |
+| Opt-in expiring/revocable local operator credentials (v0.7) | Implemented in database mode; no MFA/SSO, HTTP enrollment or remote IAM | `backend/sentinel/credential_lifecycle.py`, `backend/tests/test_credential_lifecycle.py` |
+| Signed sensor heartbeats + stale/never-seen coverage (v0.9) | Implemented for configured sensor keys; no host attestation | `backend/sentinel/app.py`, `backend/tests/test_sensor_health.py`, `docs/SENSOR_COVERAGE.md` |
+| Synthetic rule-quality benchmark (v0.8) | Implemented; scenario-level regression, not real-world validation | `backend/sentinel/benchmark.py`, `backend/benchmarks/scenarios.json`, dedicated CI job |
 | Wazuh/Suricata and general endpoint agents | **Not implemented** | Planned |
 | Automated blocking, network protection or honeypots | **Not implemented** | Planned with approval gates |
 | AI-powered investigation and threat graph | **Not implemented** | Planned |
+
+## Deterministic detection quality qualification (v0.8)
+
+From `backend/` with the development/test dependencies installed, execute:
+
+```bash
+python -m scripts.benchmark_detection --json synthetic-benchmark-results.json
+```
+
+The runner submits actual signed HTTP sensor events to a freshly migrated,
+**separate ephemeral SQLite database for each scenario**, reads real alert records,
+and verifies the HMAC audit chain. Each reviewed scenario names its expected
+rule IDs explicitly; both positives and benign/negative cases are mandatory.
+The command returns a nonzero exit code if any scenario generates missing or
+unexpected alerts; a dedicated CI job uploads the **synthetic-only** JSON report.
+
+The report includes scenario confusion counts, negative-scenario alert rate, and
+median/p95 in-process TestClient event-submission latency. **These numbers are
+regression metrics, not estimates of real-world precision, real-world false
+positive rates, sensor capture latency, network performance, EDR coverage or
+production throughput.** Run the benchmark on each change; do not add it to
+product marketing without that qualification. Timing changes with CI host load.
 
 ## Individual operator access (v0.4 development)
 
@@ -147,24 +152,45 @@ The utility checks legacy table structure, verifies the full HMAC audit chain an
 **Audit concurrency:** the audit head is a transaction-scoped locking point. On PostgreSQL, `SELECT FOR UPDATE` serializes writes; on SQLite, an explicit write lock precedes event evaluation. The audit chain is checked against the stored head's last hash and count. This detects several classes of in-database deletion and chain forks but **does not provide independent append-only storage or resistance to an attacker who owns the database and the audit secret**.
 
 
-### SQLite backup and offline recovery (v0.6)
+### SQLite disaster-recovery commands (v0.6)
 
-The optional SQLite-only maintenance utility uses SQLite's online backup API to take a consistent snapshot (including committed WAL data). The snapshot is checked for database integrity, the expected migration revision, the complete HMAC-linked audit chain and case decisions. A private manifest records its checksum and audit head and is authenticated with \`SENTINEL_AUDIT_KEY\`.
+**Never treat a backup as a guarantee until it has passed a restore drill.** For a
+local SQLite installation, v0.6 includes a snapshot utility that captures a
+transactionally consistent SQLite database (including committed WAL data),
+verifies the schema and local audit chain, and writes a SHA-256 + HMAC-authenticated
+manifest. The backup is stored in a newly created private directory. It cannot
+overwrite existing backups. It does **not** send anything to a cloud service.
 
-Run from the backend virtual environment, with the audit key loaded and a **private parent directory** under your control:
+Use a **private parent directory owned by the Sentinel service operator**, not
+a world/group-writable shared directory. Retain `SENTINEL_AUDIT_KEY` in a separate
+secure location: the same key is needed to validate and recover this backup.
+For production, store another encrypted copy off-host using independently
+managed credentials and permissions; this utility does not provide encryption
+or protection against an attacker who controls both the audit key and DB.
 
-\`\`\`bash
+```bash
+# Run in the backend virtualenv with SENTINEL_AUDIT_KEY loaded.
 mkdir -p "$HOME/sentinel-backups"
 chmod 700 "$HOME/sentinel-backups"
 cd backend
 python scripts/sqlite_recovery.py backup ./sentinel.db "$HOME/sentinel-backups/backup-001"
 python scripts/sqlite_recovery.py verify "$HOME/sentinel-backups/backup-001"
 
-# For a recovery drill, STOP the API and all database writers first.
+# For a recovery drill: STOP Sentinel API and all database writers first.
+# This command never overwrites an existing database file.
 python scripts/sqlite_recovery.py restore "$HOME/sentinel-backups/backup-001" ./restored-sentinel.db
-\`\`\`
+# Change SENTINEL_DATABASE_URL to the restored path before restarting.
+```
 
-Backup directories are created new with restrictive permissions. Restore never overwrites an existing target. The operator must ensure the API is stopped for restore; this tool cannot enforce process isolation. **Backups are not encrypted, immutable, remotely replicated, automatically scheduled, or PostgreSQL-compatible.** Retain the audit key separately; losing or rotating it without a retention plan makes old backup verification impossible. Maintain independent protected off-host copies and run documented restore drills before relying on the system.
+The restore verifies the HMAC manifest, snapshot checksum, SQLite integrity,
+schema revision and HMAC-linked audit records, then publishes the verified copy
+into a **new** file without replacing existing files. It cannot prove the API is
+stopped: the operator must ensure exclusive maintenance conditions. Test your
+backup in a disposable location, restrict filesystem permissions, and document
+the recovery procedure. This is a **SQLite-only** feature; PostgreSQL needs a
+separate, tested `pg_dump`/restore strategy and point-in-time recovery planning.
+No recovery point/time objective, storage redundancy or ransomware-proof guarantee
+is claimed.
 
 ### Linux SSH auth-log collector (optional real telemetry)
 
@@ -239,9 +265,19 @@ Only claim features that pass reproducible tests and can be demonstrated from a 
 
 **No license has been selected yet.** The author retains rights until a license is chosen. Adding a permissive open-source license should be an explicit repository-owner decision.
 
+## v0.7 — secure operator lifecycle (opt-in)
 
-## v0.7 — opt-in operator credential lifecycle
+Sentinel now provides local-administered, database-backed, time-limited operator
+credentials, with immediate server-side revocation and atomic token rotation.
+The existing static mode remains unchanged for compatibility. This is **not**
+a public authentication service or production-ready SSO/MFA.
 
-Versioned database-backed operator credentials support up to 90-day token expiry, immediate server-side revocation and atomic rotation. They are **not** remote IAM/SSO/MFA; use only with the localhost API. Static v0.4 tokens continue to work in the default mode. Database mode disables static fallback, requires an enrolled active administrator and uses an offline local CLI, never an HTTP credential-administration API.
+After a verified backup and explicit database migration, follow
+[`docs/IDENTITY_AND_ACCESS.md`](docs/IDENTITY_AND_ACCESS.md) to enroll an admin
+from the local host and opt into `SENTINEL_AUTH_MODE=database`. Token output files
+must remain outside Git; generated `*.secret`/`*.token` files are ignored as a
+secondary safeguard. Credential mutations are never exposed over the API.
 
-After a private verified backup and Alembic upgrade, follow [local identity administration](docs/IDENTITY_AND_ACCESS.md) to enroll a new database admin and opt into `SENTINEL_AUTH_MODE=database`. Generated secret files must stay outside the source tree.
+## Sensor health (v0.9, laboratory only)
+
+The authenticated `GET /api/v1/sensors` endpoint and dashboard **Sensor coverage** tab enumerate configured sensor IDs even if they never connect. Signed contacts update a server-clock record; `healthy` becomes `stale` after 180 seconds without authenticated contact. The Linux SSH collector sends heartbeats at 60-second intervals during `--follow`. Neither a heartbeat nor a healthy status proves uncompromised sensor integrity or complete endpoint coverage. See [sensor coverage and blind spots](docs/SENSOR_COVERAGE.md). Explicit Alembic migration required before startup.

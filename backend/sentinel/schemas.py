@@ -60,6 +60,12 @@ class IncomingEvent(BaseModel):
             raise ValueError("source_ip is required for network and authentication failure events")
 
 
+class SensorHeartbeat(BaseModel):
+    """Heartbeats contain no telemetry or arbitrary instructions."""
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+    asset_id: str = Field(min_length=1, max_length=100, pattern=r"^[a-zA-Z0-9._:-]+$")
+
+
 class TriageRequest(BaseModel):
     """Fail-closed alert triage contract; no externally supplied operator identity."""
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
