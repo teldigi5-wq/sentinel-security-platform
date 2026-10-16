@@ -52,11 +52,11 @@ CATEGORIES = {
 }
 
 
-def _sign(body: bytes):
+def _sign(body: bytes, sensor_id: str, sensor_key: str):
     stamp, nonce = str(int(time.time())), secrets.token_hex(16)
-    canonical = f"{_SENSOR}\n{stamp}\n{nonce}\n{hashlib.sha256(body).hexdigest()}".encode()
-    signature = hmac.new(_KEY.encode(), canonical, hashlib.sha256).hexdigest()
-    return {"X-Sentinel-Sensor": _SENSOR, "X-Sentinel-Timestamp": stamp,
+    canonical = f"{sensor_id}\n{stamp}\n{nonce}\n{hashlib.sha256(body).hexdigest()}".encode()
+    signature = hmac.new(sensor_key.encode(), canonical, hashlib.sha256).hexdigest()
+    return {"X-Sentinel-Sensor": sensor_id, "X-Sentinel-Timestamp": stamp,
             "X-Sentinel-Nonce": nonce, "X-Sentinel-Signature": signature}
 
 
@@ -79,11 +79,15 @@ def execute(cases=None):
         with tempfile.TemporaryDirectory(prefix="sentinel-quality-") as temp:
             url = f"sqlite:///{Path(temp) / 'case.db'}"
             migrate(url)
+            # Preserve sensor identity in multi-asset synthetic fixtures.
+            inventory = {f"{_SENSOR}-{i}": f"host-{i}" for i in range(asset_count)}
+            keys = {sid: f"{_KEY}-{i}" for i, sid in enumerate(inventory)}
             settings = Settings(database_url=url, operator_token=_OP, audit_key=_AUDIT,
-                                sensor_keys={_SENSOR: _KEY},
+                                sensor_keys=keys, sensor_assets=inventory,
                                 frontend_origins=("http://localhost:3000",))
             with TestClient(create_app(settings)) as client:
                 for index in range(count):
+                    sensor_id = f"{_SENSOR}-{index % asset_count}"
                     evt = {"asset_id": f"host-{index % asset_count}",
                            "category": CATEGORIES[action], "action": action,
                            "observed_at": (baseline + timedelta(seconds=index * step)).isoformat()}
@@ -91,7 +95,7 @@ def execute(cases=None):
                         evt["source_ip"] = f"198.51.100.{10 + index % source_count}"
                     body = json.dumps(evt, separators=(",", ":")).encode()
                     start = time.perf_counter_ns()
-                    response = client.post("/api/v1/events", content=body, headers=_sign(body))
+                    response = client.post("/api/v1/events", content=body, headers=_sign(body, sensor_id, keys[sensor_id]))
                     latencies.append((time.perf_counter_ns() - start) / 1_000_000)
                     if response.status_code != 202:
                         raise RuntimeError(f"Signed ingestion failed: {case_id}, HTTP {response.status_code}")

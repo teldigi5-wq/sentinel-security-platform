@@ -30,7 +30,8 @@ def test_never_seen_and_authentication(tmp_path):
     assert result.status_code == 200
     assert result.headers['cache-control'] == 'no-store'
     assert result.json()['sensors'] == [{
-        'sensor_id':'lab-one','asset_id':None,'status':'never_seen',
+        'sensor_id':'lab-one','asset_id':None,'expected_asset_id':None,
+        'binding_mode':'first_contact','status':'never_seen',
         'last_seen_at':None,'last_event_at':None,'heartbeat_count':0,'event_count':0}]
     assert result.json()['stale_after_seconds'] == 180
 

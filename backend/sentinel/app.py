@@ -42,10 +42,18 @@ def sensor_state(last_seen: datetime | None, now: datetime) -> str:
     # A future timestamp cannot certify health; server clock corruption is a gap.
     return "healthy" if 0 <= age <= SENSOR_STALE_SECONDS else "stale"
 
-def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, heartbeat: bool) -> None:
+def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, heartbeat: bool,
+                         enrolled_asset: str | None = None) -> None:
     # Called only after HMAC verification, within the audit-writer transaction.
     now = utcnow()
+    if enrolled_asset is not None and asset_id != enrolled_asset:
+        raise HTTPException(status_code=403, detail="Sensor not authorized for this asset")
     status = session.get(SensorStatus, sensor_id)
+    # First-contact pinning preserves local compatibility, but must not be
+    # mistaken for administrator-approved enrollment. Explicit enrollment
+    # is necessary for genuine sensor-to-asset assurance.
+    if status is not None and status.asset_id != asset_id:
+        raise HTTPException(status_code=403, detail="Sensor not authorized for this asset")
     if status is None:
         status = SensorStatus(sensor_id=sensor_id, asset_id=asset_id, last_seen_at=now,
                               last_event_at=None if heartbeat else now,
@@ -53,7 +61,6 @@ def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, hea
                               heartbeat_count=1 if heartbeat else 0)
         session.add(status)
     else:
-        status.asset_id = asset_id
         status.last_seen_at = now
         if heartbeat:
             status.heartbeat_count += 1
@@ -65,6 +72,12 @@ def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, hea
 
 def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings or load_settings()
+    if (settings.sensor_assets and (
+        set(settings.sensor_assets) != set(settings.sensor_keys)
+        or any(not isinstance(asset, str)
+                   or not re.fullmatch(r"[a-zA-Z0-9._:-]{1,100}", asset)
+                   for asset in settings.sensor_assets.values()))):
+        raise RuntimeError("Every configured sensor must have one valid enrolled asset")
     if settings.auth_mode not in ("static", "database"):
         raise RuntimeError("Unsupported operator authentication mode")
     if settings.auth_mode == "database" and (settings.operator_token or settings.operators):
@@ -103,7 +116,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.9.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.10.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
@@ -204,7 +217,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lock_audit_head(session)
             session.add(SensorNonce(sensor_id=sensor_id, nonce=nonce))
             session.flush()
-            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=True)
+            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=True,
+                                 enrolled_asset=settings.sensor_assets.get(sensor_id))
             append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
                          action="sensor.heartbeat", resource=body.asset_id)
             session.commit()
@@ -230,7 +244,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lock_audit_head(session)  # Serialize detection + audit across writers.
             session.add(SensorNonce(sensor_id=sensor_id, nonce=nonce))
             session.add(incoming)
-            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=False)
+            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=False,
+                                 enrolled_asset=settings.sensor_assets.get(sensor_id))
             session.flush()
             alerts = evaluate(session, incoming)
             append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
@@ -253,12 +268,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             row = known.get(sensor_id)
             last_seen = row.last_seen_at if row else None
             result.append({"sensor_id": sensor_id, "asset_id": row.asset_id if row else None,
+                           "expected_asset_id": settings.sensor_assets.get(sensor_id),
+                           "binding_mode": "explicit" if sensor_id in settings.sensor_assets else "first_contact",
                            "status": sensor_state(last_seen, now),
                            "last_seen_at": as_utc_iso(last_seen) if last_seen else None,
                            "last_event_at": as_utc_iso(row.last_event_at) if row and row.last_event_at else None,
                            "heartbeat_count": row.heartbeat_count if row else 0,
                            "event_count": row.event_count if row else 0})
         return {"stale_after_seconds": SENSOR_STALE_SECONDS, "sensors": result,
+                "summary": {"configured": len(result),
+                            "healthy": sum(s["status"] == "healthy" for s in result),
+                            "gaps": sum(s["status"] != "healthy" for s in result),
+                            "explicitly_enrolled": len(settings.sensor_assets)},
                 "assurance": "Last accepted signed contact, not host integrity or assured network coverage"}
 
     @app.get("/api/v1/session")
