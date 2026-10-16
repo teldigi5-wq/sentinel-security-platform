@@ -15,7 +15,7 @@ from pydantic import ValidationError
 from sqlalchemy import create_engine, func, select, update, event as sa_event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from .audit import append_audit, decision_digest, event_digest, lock_audit_head, verify_case_decisions, verify_chain, verify_event_evidence
+from .audit import append_audit, alert_digest, decision_digest, event_digest, lock_audit_head, verify_alert_evidence, verify_case_decisions, verify_chain, verify_event_evidence
 from .detection import evaluate
 from .database import verify_schema
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
@@ -104,9 +104,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             with connection.begin():
                 with Session(bind=connection) as preflight:
                     event_valid, _legacy_count = verify_event_evidence(preflight)
+                    alert_valid, _legacy_alerts = verify_alert_evidence(preflight)
                     integrity_valid = (verify_chain(preflight, settings.audit_key)
                                        and verify_case_decisions(preflight)
-                                       and event_valid)
+                                       and event_valid and alert_valid)
                     if not integrity_valid:
                         raise RuntimeError("Sentinel evidence integrity check failed at startup; "
                                            "stop the service and investigate or restore a verified backup")
@@ -263,10 +264,21 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                                  enrolled_asset=settings.sensor_assets.get(sensor_id))
             session.flush()
             alerts = evaluate(session, incoming)
+            # Preserve new associations before flush, including added links to existing alerts.
+            new_links = [(link.alert_id, link.event_id) for link in session.new
+                         if isinstance(link, AlertEvidence)]
+            session.flush()  # Fill DB-managed receipt/creation timestamps for signing.
             append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
                          action="event.ingested", resource=f"event:v1:{incoming.id}:{event_digest(incoming)}")
             for alert_id in alerts:
-                append_audit(session, settings.audit_key, actor="detection-engine", action="alert.created", resource=alert_id)
+                persisted = session.get(Alert, alert_id)
+                append_audit(session, settings.audit_key, actor="detection-engine",
+                             action="alert.created",
+                             resource=f"alert:v1:{alert_id}:{alert_digest(persisted)}")
+            for alert_id, event_id in sorted(new_links):
+                append_audit(session, settings.audit_key, actor="detection-engine",
+                             action="alert.evidence.linked",
+                             resource=f"link:v1:{alert_id}:{event_id}")
             session.commit()
         except IntegrityError as exc:
             session.rollback()
@@ -397,15 +409,17 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                 with connection.begin():
                     with Session(bind=connection) as check:
                         event_valid, legacy_count = verify_event_evidence(check)
+                        alert_valid, legacy_alerts = verify_alert_evidence(check)
                         chain_valid = verify_chain(check, settings.audit_key)
                         decisions_valid = verify_case_decisions(check)
                         records = check.scalar(select(func.count()).select_from(AuditRecord)) or 0
                         event_count = check.scalar(select(func.count()).select_from(SecurityEvent)) or 0
-            valid = bool(event_valid and chain_valid and decisions_valid)
+            valid = bool(event_valid and alert_valid and chain_valid and decisions_valid)
             return {"valid": valid, "records": records, "events": event_count,
                     "legacy_unanchored_events": legacy_count,
+                    "legacy_unanchored_alert_records": legacy_alerts,
                     "event_payload_assurance": ("integrity_failed" if not valid else
-                                                 "partial_legacy" if legacy_count else "anchored")}
+                                                 "partial_legacy" if legacy_count or legacy_alerts else "anchored")}
         except Exception as exc:
             # Never return DB internals, SQL text, a secret or a false green.
             raise HTTPException(status_code=503, detail="Integrity state unavailable") from exc
@@ -420,7 +434,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         result = read_integrity_snapshot()
         if not result["valid"]:
             state = "integrity_failed"
-        elif result["legacy_unanchored_events"]:
+        elif result["legacy_unanchored_events"] or result["legacy_unanchored_alert_records"]:
             state = "partial_legacy"
         elif result["events"] == 0:
             state = "empty"
@@ -436,6 +450,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         return {"valid": result["valid"], "records": result["records"],
                 "event_payload_assurance": result["event_payload_assurance"],
                 "legacy_unanchored_events": result["legacy_unanchored_events"],
-                "assurance": "HMAC chain, triage and v1 event-row cross-check; legacy event payloads are unverifiable; not externally immutable"}
+                "legacy_unanchored_alert_records": result["legacy_unanchored_alert_records"],
+                "assurance": "HMAC chain, triage and v1 event/alert/evidence-link cross-check; legacy payloads or links may be unverifiable; not externally immutable"}
 
     return app
