@@ -12,13 +12,13 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
-from sqlalchemy import create_engine, func, select, event as sa_event
+from sqlalchemy import create_engine, func, select, update, event as sa_event
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
-from .audit import append_audit, verify_chain
+from .audit import append_audit, decision_digest, verify_case_decisions, verify_chain
 from .detection import evaluate
-from .models import Alert, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
-from .schemas import IncomingEvent
+from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
+from .schemas import IncomingEvent, TriageRequest
 from .settings import Settings, load_settings
 
 def as_utc_iso(value: datetime) -> str:
@@ -52,10 +52,10 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.1.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.2.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
-                       allow_credentials=False, allow_methods=["GET"], allow_headers=["Authorization", "Content-Type"])
+                       allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
 
     def get_session():
         with session_factory() as session:
@@ -166,10 +166,54 @@ def create_app(settings: Settings | None = None) -> FastAPI:
                  "asset_id": e.asset_id, "source_ip": e.source_ip,
                  "observed_at": as_utc_iso(e.observed_at)} for e in rows]
 
+    @app.get("/api/v1/alerts/{alert_id}/history")
+    def alert_history(alert_id: str, _: Operator, session: DB):
+        if session.get(Alert, alert_id) is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        decisions = session.scalars(select(AlertDecision).where(
+            AlertDecision.alert_id == alert_id
+        ).order_by(AlertDecision.id.desc()).limit(50)).all()
+        return [{"id": row.id, "previous_state": row.previous_state,
+                 "new_state": row.new_state, "actor": row.actor,
+                 "reason": row.reason, "decided_at": as_utc_iso(row.decided_at)} for row in decisions]
+
+    @app.post("/api/v1/alerts/{alert_id}/transition")
+    async def transition_alert(alert_id: str, request: Request, _: Operator, session: DB):
+        # Explicit streaming limit ensures untrusted reasons cannot create unbounded bodies.
+        raw = bytearray()
+        async for chunk in request.stream():
+            raw.extend(chunk)
+            if len(raw) > 2048:
+                raise HTTPException(status_code=413, detail="Triage body too large")
+        try:
+            instruction = TriageRequest.model_validate_json(raw)
+        except ValidationError as exc:
+            raise HTTPException(status_code=422, detail="Invalid triage instruction") from exc
+        allowed = {"open": "investigating", "investigating": "resolved", "resolved": "investigating"}
+        if allowed.get(instruction.expected_state) != instruction.new_state:
+            raise HTTPException(status_code=422, detail="Unsupported incident state transition")
+        # A state-conditional SQL UPDATE avoids most lost-update races between operators.
+        changed = session.execute(update(Alert).where(
+            Alert.id == alert_id, Alert.state == instruction.expected_state
+        ).values(state=instruction.new_state).returning(Alert.id)).scalar_one_or_none()
+        if changed is None:
+            session.rollback()
+            if session.get(Alert, alert_id) is None:
+                raise HTTPException(status_code=404, detail="Alert not found")
+            raise HTTPException(status_code=409, detail="Alert state changed; refresh before retrying")
+        decision = AlertDecision(alert_id=alert_id, previous_state=instruction.expected_state,
+                                 new_state=instruction.new_state, reason=instruction.reason, actor="operator")
+        session.add(decision)
+        session.flush()
+        append_audit(session, settings.audit_key, actor="operator", action="alert.transition",
+                     resource=f"decision:{decision.id}:{decision_digest(decision)}")
+        session.commit()
+        return {"alert_id": alert_id, "state": instruction.new_state, "decision_id": decision.id}
+
     @app.get("/api/v1/audit/integrity")
     def audit_integrity(_: Operator, session: DB):
-        return {"valid": verify_chain(session, settings.audit_key),
+        return {"valid": verify_chain(session, settings.audit_key) and verify_case_decisions(session),
                 "records": session.scalar(select(func.count()).select_from(AuditRecord)) or 0,
-                "assurance": "HMAC chain; not externally anchored or immutable"}
+                "assurance": "HMAC chain and triage cross-check; not externally anchored or immutable"}
 
     return app
