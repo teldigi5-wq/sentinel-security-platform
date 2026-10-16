@@ -342,3 +342,16 @@ Sentinel now provides an **offline, opt-in** replay-nonce retention guard for lo
 ## v0.17 — Sealed event-evidence export (offline, non-destructive)
 
 `python -m scripts.export_event_evidence export` creates an owner-only, HMAC-authenticated copy of older normalized security-event rows and linked alert IDs from an independently verified SQLite snapshot. `verify` checks integrity without the source database. This **does not delete events**, archive complete incident cases, or provide independently immutable evidence. The export may contain personal data (IP addresses): keep it off public hosting and protect it at rest. See [Evidence Export](docs/EVIDENCE_EXPORT.md).
+
+
+## Integration candidate — dependency evidence (v0.19)
+
+GitHub Actions are pinned to reviewed upstream commit SHAs. Frontend CI generates a **candidate**
+`package-lock.json`, installs it with `npm ci`, and uploads the candidate lock as a seven-day
+artifact. This supports review of what CI actually installed, **not reproducible installations
+across future runs**: the candidate still gets re-resolved by the registry on each run.
+Before production or integration into `main`, download the artifact from a successful run,
+review dependency provenance and vulnerability status, commit the reviewed `frontend/package-lock.json`,
+remove the lock-generation step and use `npm ci` only. Python installation ranges also need
+a separately reviewed constraints/lock approach. See
+[Dependency release evidence](docs/DEPENDENCY_RELEASE_EVIDENCE.md).
