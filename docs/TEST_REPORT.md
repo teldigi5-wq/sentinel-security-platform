@@ -291,11 +291,9 @@ secondary safeguard. Credential mutations are never exposed over the API.
 - Limitations: connectivity health only; no hardware attestation, source completeness validation, transport across hosts or active response.
 
 
-## v0.10 — Asset enrollment and fail-closed binding
+## v0.10 — Sensor identity binding
 
-- New `tests/test_sensor_enrollment.py` exercises explicit mapping, invalid configuration, untouched database after rejected binding, no nonce consumption on denial, first-contact immutability, and recovery mismatch rejection.
-- Existing regression suite, schema tests, synthetic detection benchmarks and PostgreSQL CI should remain green before this feature is merged.
-- Deliberate limitation: sensor signing keys can be stolen; asset pinning is **not** remote attestation. Runtime re-enrollment and external key custody are not provided.
+Local qualification: existing backend tests and new asset-enrollment authorization tests passed, including no event or nonce persistence after a rejected identity, and four-rule synthetic detection fixtures using separate enrolled sensors for each asset. A fresh GitHub CI validation is required before merge. Real-world endpoint attestation, authorized device provisioning, encrypted off-host backups and production soak testing remain unverified.
 
 ## v0.14 isolated Linux recovery qualification (not a host deployment)
 

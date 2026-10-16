@@ -1,7 +1,7 @@
 """Read-only, loopback-only operational coverage probe.
 
-Exit-code monitoring must fail closed on malformed coverage responses. The probe
-reports server-observed contact only; it cannot attest that a host is protected.
+Only authenticated, server-observed contact is measured. Never interpret a
+healthy connection as attestation of the protected host or complete logs.
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ VALID_STATES = frozenset({"healthy", "stale", "never_seen"})
 
 
 class CoverageProbeError(RuntimeError):
-    """Non-sensitive operator-facing failure."""
+    """Non-sensitive operational error."""
 
 
 @dataclass(frozen=True)
@@ -48,7 +48,7 @@ class CoverageAssessment:
 
 
 def assess(payload: object) -> CoverageAssessment:
-    """Do not trust a remote summary; recompute state from individual sensors."""
+    """Fail closed if any sensor or declared summary cannot be reconciled."""
     if not isinstance(payload, dict) or not isinstance(payload.get("sensors"), list):
         raise CoverageProbeError("Invalid sensor coverage response")
     sensors = payload["sensors"]
@@ -90,7 +90,7 @@ def assess(payload: object) -> CoverageAssessment:
 
 
 def read_private_token(path: Path) -> str:
-    """Load a viewer/analyst token without using command-line arguments or logging it."""
+    """Load viewer-scoped bearer token from an owned private regular file."""
     if not path.is_absolute():
         raise CoverageProbeError("Token file path must be absolute")
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
@@ -116,7 +116,7 @@ def read_private_token(path: Path) -> str:
 
 
 def fetch_coverage(*, port: int, token: str, timeout: float = 5.0) -> CoverageAssessment:
-    """Fixed local destination; no URL override, DNS, proxy, redirect or remote host."""
+    """Fixed loopback transport; no user-selectable URL, DNS, redirects or proxies."""
     if not 1 <= port <= 65535 or not 0.5 <= timeout <= 10.0:
         raise CoverageProbeError("Invalid local probe configuration")
     conn = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)

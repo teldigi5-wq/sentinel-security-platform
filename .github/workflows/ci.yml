@@ -69,14 +69,14 @@ jobs:
           python-version: '3.12'
       - name: Install test dependencies
         run: python -m pip install -e './backend[test]'
-      - name: Run independent synthetic detection regression
+      - name: Run synthetic signed-ingestion detection regression
         working-directory: backend
-        run: python -m scripts.benchmark_detection --json synthetic-benchmark-results.json
-      - name: Attach test evidence (synthetic only)
+        run: python -m scripts.benchmark_quality --json synthetic-quality-results.json
+      - name: Preserve short-lived synthetic benchmark evidence
         uses: actions/upload-artifact@v4
         with:
-          name: sentinel-synthetic-detection-results
-          path: backend/synthetic-benchmark-results.json
+          name: sentinel-v08-synthetic-quality
+          path: backend/synthetic-quality-results.json
           if-no-files-found: error
           retention-days: 7
   frontend:
