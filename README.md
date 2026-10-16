@@ -281,3 +281,8 @@ secondary safeguard. Credential mutations are never exposed over the API.
 ## Sensor health (v0.9, laboratory only)
 
 The authenticated `GET /api/v1/sensors` endpoint and dashboard **Sensor coverage** tab enumerate configured sensor IDs even if they never connect. Signed contacts update a server-clock record; `healthy` becomes `stale` after 180 seconds without authenticated contact. The Linux SSH collector sends heartbeats at 60-second intervals during `--follow`. Neither a heartbeat nor a healthy status proves uncompromised sensor integrity or complete endpoint coverage. See [sensor coverage and blind spots](docs/SENSOR_COVERAGE.md). Explicit Alembic migration required before startup.
+
+
+## v0.10 — Sensor-to-asset enrollment
+
+Set `SENTINEL_SENSOR_ASSETS` with a complete mapping from configured sensor IDs to approved asset IDs. Signed contacts claiming a different asset are rejected, and previously observed asset identities cannot silently change. Unconfigured local labs retain **trust-on-first-contact** pinning only, which is not administrator-approved enrollment. Coverage shows `never_seen`, stale gaps, expected assets, and binding mode. See [Sensor Enrollment](docs/SENSOR_ENROLLMENT.md). This is not endpoint attestation.

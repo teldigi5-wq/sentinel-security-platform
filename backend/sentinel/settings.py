@@ -22,6 +22,7 @@ class Settings:
     frontend_origins: tuple[str, ...]
     operators: tuple[OperatorIdentity, ...] = field(default_factory=tuple)
     auth_mode: str = "static"
+    sensor_assets: dict[str, str] = field(default_factory=dict)
 
 
 def load_settings() -> Settings:
@@ -66,6 +67,21 @@ def load_settings() -> Settings:
         not isinstance(v, str) or len(v) < 32 for k, v in sensor_keys.items()
     ):
         raise RuntimeError("SENTINEL_SENSOR_KEYS must map safe sensor IDs to secrets of at least 32 characters")
+    # Explicit asset enrollment is optional for old local labs. When enabled,
+    # every configured sensor must have one exact pinned asset identifier.
+    configured_assets = os.getenv("SENTINEL_SENSOR_ASSETS")
+    sensor_assets: dict[str, str] = {}
+    if configured_assets is not None:
+        try:
+            sensor_assets = json.loads(configured_assets)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError("SENTINEL_SENSOR_ASSETS must be a JSON object") from exc
+        if (not isinstance(sensor_assets, dict)
+                or set(sensor_assets) != set(sensor_keys)
+                or any(not isinstance(value, str)
+                           or not re.fullmatch(r"[a-zA-Z0-9._:-]{1,100}", value)
+                           for value in sensor_assets.values())):
+            raise RuntimeError("SENTINEL_SENSOR_ASSETS must assign each sensor to one valid asset")
     origins = tuple(x.strip() for x in os.getenv("SENTINEL_FRONTEND_ORIGINS", "http://localhost:3000").split(",") if x.strip())
     for origin in origins:
         parsed = urlparse(origin)
@@ -79,4 +95,5 @@ def load_settings() -> Settings:
         frontend_origins=origins,
         operators=tuple(operators),
         auth_mode=auth_mode,
+        sensor_assets=sensor_assets,
     )

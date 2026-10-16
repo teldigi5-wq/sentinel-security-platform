@@ -289,3 +289,8 @@ secondary safeguard. Credential mutations are never exposed over the API.
 - Regression cases for never-seen, stale transition, tampered/expired/replayed heartbeat, no false detections, allowed destination enforcement, recovered signed events and audit integrity.
 - PostgreSQL integration case in dedicated CI job; local tests skip it when no PostgreSQL is configured.
 - Limitations: connectivity health only; no hardware attestation, source completeness validation, transport across hosts or active response.
+
+
+## v0.10 — Sensor identity binding
+
+Local qualification: existing backend tests and new asset-enrollment authorization tests passed, including no event or nonce persistence after a rejected identity, and four-rule synthetic detection fixtures using separate enrolled sensors for each asset. A fresh GitHub CI validation is required before merge. Real-world endpoint attestation, authorized device provisioning, encrypted off-host backups and production soak testing remain unverified.
