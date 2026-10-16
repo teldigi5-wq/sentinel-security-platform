@@ -8,6 +8,7 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine, select
 from sqlalchemy.orm import Session
 from sentinel.app import create_app
+from sentinel.database import migrate
 from sentinel.models import AuditRecord
 from sentinel.settings import Settings
 
@@ -20,6 +21,7 @@ AUDIT = "a" * 48
 def client_for(tmp_path):
     settings = Settings(database_url=f"sqlite:///{tmp_path / 'test.db'}", operator_token=OP,
                         audit_key=AUDIT, sensor_keys={"lab-one": KEY}, frontend_origins=("http://localhost:3000",))
+    migrate(settings.database_url)
     return TestClient(create_app(settings)), settings
 
 
