@@ -315,3 +315,11 @@ with no credentials or log contents, and refuses to replace previous reports.
 Run it on an authorized Linux host as documented in
 [Linux host preflight](docs/LINUX_HOST_PREFLIGHT.md). Passing static checks does
 **not** certify reboot recovery, live ingestion or detection completeness.
+
+## v0.14 — Isolated Linux recovery qualification
+
+Run `cd backend && python -m scripts.drill_linux_collector --json-out /absolute/private/unused-evidence.json`
+for an isolated signed-telemetry, lost-ACK replay, log rotation, simulated
+outage/recovery and audit-integrity drill. A failing phase produces nonzero exit.
+This does **not** qualify systemd, a real Linux host, or real attack-detection
+accuracy. See [Linux Recovery Drill](docs/LINUX_RECOVERY_DRILL.md).

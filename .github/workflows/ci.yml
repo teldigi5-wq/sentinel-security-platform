@@ -25,6 +25,26 @@ jobs:
       - name: Run core security regression tests
         working-directory: backend
         run: python -m pytest -q
+  linux-recovery-drill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install isolated drill dependencies
+        run: python -m pip install -e './backend[test]'
+      - name: Exercise signed ingestion and recovery (fixture only)
+        working-directory: backend
+        run: python -m scripts.drill_linux_collector --json-out "$GITHUB_WORKSPACE/sentinel-isolated-drill.json"
+      - name: Attach synthetic-only qualification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: sentinel-isolated-linux-recovery-results
+          path: sentinel-isolated-drill.json
+          if-no-files-found: error
+          retention-days: 7
   detection-quality:
     runs-on: ubuntu-latest
     timeout-minutes: 15
