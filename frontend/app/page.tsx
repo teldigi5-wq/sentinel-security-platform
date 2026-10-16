@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   Activity, ArrowDownLeft, ArrowUpRight, BarChart3, Check, ChevronRight, CircleAlert,
   CircleDot, ClipboardList, Clock3, Database, Fingerprint, HardDrive, KeyRound,
@@ -58,6 +58,8 @@ export default function CommandCenter() {
   const [triageReason, setTriageReason] = useState("");
   const [triageBusy, setTriageBusy] = useState(false);
   const [sidebar, setSidebar] = useState(false);
+  const drawerRef = useRef<HTMLElement>(null);
+  const menuRef = useRef<HTMLButtonElement>(null);
   const [lastSync, setLastSync] = useState<Date | null>(null);
 
   const request = useCallback(async <T,>(route: string, key: string): Promise<T> => {
@@ -82,7 +84,7 @@ export default function CommandCenter() {
         // A revoked or changed identity must not leave previously loaded telemetry visible.
         setToken(""); setIdentity(null); setOverview(null); setAlerts([]); setEvents([]);
         setAudit(null); setCoverage(null); setSelected(null); setEvidence(null); setDecisions([]);
-        setActive("overview"); setLastSync(null);
+        setActive("overview"); setSidebar(false); setLastSync(null);
       }
       setError(e instanceof Error ? e.message : "Cannot reach the API");
       return false;
@@ -95,6 +97,38 @@ export default function CommandCenter() {
     return () => clearInterval(timer);
   }, [token, refresh]);
 
+  // When the mobile navigation drawer opens, keep keyboard navigation inside
+  // it and return focus to the toggle on dismissal. No dependency or animation.
+  useEffect(() => {
+    if (!sidebar) return;
+    const drawer = drawerRef.current;
+    if (!drawer) return;
+    const controls = () => Array.from(drawer.querySelectorAll<HTMLButtonElement>("button:not(:disabled)"));
+    controls()[0]?.focus();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setSidebar(false);
+        menuRef.current?.focus();
+      } else if (event.key === "Tab") {
+        const items = controls();
+        if (!items.length) return;
+        if (event.shiftKey && document.activeElement === items[0]) {
+          event.preventDefault(); items[items.length - 1].focus();
+        } else if (!event.shiftKey && document.activeElement === items[items.length - 1]) {
+          event.preventDefault(); items[0].focus();
+        }
+      }
+    };
+    document.addEventListener("keydown", onKeyDown);
+    return () => document.removeEventListener("keydown", onKeyDown);
+  }, [sidebar]);
+
+  function closeNavigation() {
+    setSidebar(false);
+    menuRef.current?.focus();
+  }
+
   async function authenticate(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     if (entry.length === 0) return;
@@ -103,7 +137,7 @@ export default function CommandCenter() {
   }
   function signOut() {
     setToken(""); setEntry(""); setIdentity(null); setActive("overview"); setOverview(null); setAlerts([]); setEvents([]); setAudit(null); setCoverage(null);
-    setSelected(null); setEvidence(null); setDecisions([]); setTriageReason(""); setLastSync(null); setError("");
+    setSelected(null); setEvidence(null); setDecisions([]); setSidebar(false); setTriageReason(""); setLastSync(null); setError("");
   }
   async function inspect(alertId: string) {
     if (selected === alertId) { setSelected(null); setEvidence(null); setDecisions([]); return; }
@@ -149,12 +183,12 @@ export default function CommandCenter() {
   </main>;
 
   return <div className="app-shell">
-    <aside className={`sidebar ${sidebar ? "sidebar-open" : ""}`}><Brand/><div className="sidegroup-label">WORKSPACE</div><nav id="sentinel-navigation" aria-label="Main navigation">{nav.filter(({id})=>id!=="integrity" || identity?.capabilities.audit_integrity).map(({id,text,Icon})=><button key={id} aria-current={active===id ? "page" : undefined} className={`navitem ${active===id?"current":""}`} onClick={()=>{setActive(id);setSidebar(false)}}><Icon size={18} strokeWidth={1.6}/><span>{text}</span>{active===id && <span className="navindicator"/>}</button>)}</nav>
+    <aside ref={drawerRef} className={`sidebar ${sidebar ? "sidebar-open" : ""}`} aria-label="Workspace navigation"><Brand/><div className="sidegroup-label">WORKSPACE</div><nav id="sentinel-navigation" aria-label="Main navigation">{nav.filter(({id})=>id!=="integrity" || identity?.capabilities.audit_integrity).map(({id,text,Icon})=><button key={id} aria-current={active===id ? "page" : undefined} className={`navitem ${active===id?"current":""}`} onClick={()=>{setActive(id);if (sidebar) closeNavigation()}}><Icon size={18} strokeWidth={1.6}/><span>{text}</span>{active===id && <span className="navindicator"/>}</button>)}</nav>
       <div className="sidegroup-label second">SYSTEM STATUS</div><div className="side-status"><div className="status-row"><span className="live-dot"/> Security core connected</div><div className="status-desc">Deterministic detection<br/>No automated enforcement</div></div>
       <div className="sidebar-end"><div className="edition">SENTINEL <span>COMMUNITY ENGINE</span><small>LOCAL-FIRST / V0.4.0</small></div><button className="signout" onClick={signOut}><LogOut size={17}/> Lock command center</button></div>
     </aside>
-    {sidebar && <button aria-label="Close navigation" className="mobile-overlay" onClick={()=>setSidebar(false)}/>}
-    <div className="app-main"><header className="topbar"><div className="topbar-left"><button className="mobile-menu iconbtn" onClick={()=>setSidebar(!sidebar)} aria-label="Toggle navigation" aria-expanded={sidebar} aria-controls="sentinel-navigation">{sidebar?<X size={20}/>:<Menu size={20}/>}</button><span className="topbar-breadcrumb">SENTINEL</span><ChevronRight size={13}/><span className="topbar-current">{nav.find(n=>n.id===active)?.text}</span></div><div className="topbar-right"><span className="workspace-pill"><span className="live-dot"/> LOCAL SYSTEM</span><button className="iconbtn" aria-label="Refresh telemetry" title="Refresh telemetry" disabled={busy} onClick={()=>void refresh(token)}><RefreshCcw size={17} className={busy?"spin":""}/></button><span className="operator-monogram" title={`${identity?.operator_id ?? "Operator"} · ${identity?.role ?? "unknown"}`}>{identity?.operator_id.slice(0,2).toUpperCase() || "OP"}</span></div></header>
+    {sidebar && <button aria-label="Close navigation" className="mobile-overlay" tabIndex={-1} aria-hidden="true" onClick={closeNavigation}/>}
+    <div className="app-main"><header className="topbar"><div className="topbar-left"><button ref={menuRef} className="mobile-menu iconbtn" onClick={()=>sidebar?closeNavigation():setSidebar(true)} aria-label="Toggle navigation" aria-expanded={sidebar} aria-controls="sentinel-navigation">{sidebar?<X size={20}/>:<Menu size={20}/>}</button><span className="topbar-breadcrumb">SENTINEL</span><ChevronRight size={13}/><span className="topbar-current">{nav.find(n=>n.id===active)?.text}</span></div><div className="topbar-right"><span className="workspace-pill"><span className="live-dot"/> LOCAL SYSTEM</span><button className="iconbtn" aria-label="Refresh telemetry" title="Refresh telemetry" disabled={busy} onClick={()=>void refresh(token)}><RefreshCcw size={17} className={busy?"spin":""}/></button><span className="operator-monogram" title={`${identity?.operator_id ?? "Operator"} · ${identity?.role ?? "unknown"}`}>{identity?.operator_id.slice(0,2).toUpperCase() || "OP"}</span></div></header>
       <div className="content"><div className="page-heading"><div><div className="eyebrow app-eyebrow"><span className="eyebrowline"/> SECURITY OPERATIONS / LOCAL ENVIRONMENT</div><h1>{active==="overview"?"Intelligence overview":active==="alerts"?"Incident investigations":active==="events"?"Event intelligence":active==="sensors"?"Sensor coverage":"Evidence integrity"}</h1><p>{active==="overview"?"A precise operational view of observed activity and verified detections.":active==="alerts"?"Deterministic findings supported by traceable event evidence.":active==="events"?"Validated event records received from authenticated sensors.":active==="sensors"?"Check authenticated sensor connectivity, missing enrollment and stale reporting gaps.":"Review the integrity of the local audit chain."}</p></div><div className="heading-actions"><span className="update-label"><Clock3 size={14}/>{lastSync ? `Updated ${lastSync.toLocaleTimeString()}`:"No sync"}</span><button className="outline-btn" onClick={()=>void refresh(token)} disabled={busy}><RefreshCcw size={15} className={busy?"spin":""}/> Refresh</button></div></div>
       {error && <div role="alert" className="error-banner"><CircleAlert size={16}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss error"><X size={15}/></button></div>}
       {active==="overview" && <>
@@ -185,5 +219,5 @@ export default function CommandCenter() {
 
 function AlertTable({alerts,onSelect}:{alerts:Alert[];onSelect:(id:string)=>void}) {
   if(!alerts.length)return <Empty title="No findings recorded" detail="There are no confirmed rule matches in the current event history."/>;
-  return <div className="table-scroll"><table><thead><tr><th>Severity</th><th>Finding</th><th>Asset / source</th><th>Observed</th><th>Status</th><th></th></tr></thead><tbody>{alerts.map(a=><tr key={a.id}><td><span className={`severity severity-${a.severity}`}><span/>{a.severity}</span></td><td><strong className="finding-name">{a.title}</strong><small className="finding-rule">{a.rule_id}</small></td><td><span>{a.asset_id}</span><small className="finding-rule mono">{a.source_ip||"No IP supplied"}</small></td><td className="subtle mono">{formatDate(a.created_at)}</td><td><span className="state-dot"/> {a.state}</td><td><button title="Review evidence" aria-label={`Review evidence for ${a.title}`} onClick={()=>void onSelect(a.id)} className="row-action"><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>Severity</th><th>Finding</th><th>Asset / source</th><th>Observed</th><th>Status</th><th scope="col">Actions</th></tr></thead><tbody>{alerts.map(a=><tr key={a.id}><td><span className={`severity severity-${a.severity}`}><span/>{a.severity}</span></td><td><strong className="finding-name">{a.title}</strong><small className="finding-rule">{a.rule_id}</small></td><td><span>{a.asset_id}</span><small className="finding-rule mono">{a.source_ip||"No IP supplied"}</small></td><td className="subtle mono">{formatDate(a.created_at)}</td><td><span className="state-dot"/> {a.state}</td><td><button title="Review evidence" aria-label={`Review evidence for ${a.title}`} onClick={()=>void onSelect(a.id)} className="row-action"><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></div>;
 }
