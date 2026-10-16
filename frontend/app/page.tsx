@@ -8,13 +8,14 @@ import {
   ShieldAlert, ShieldCheck, ShieldHalf, Terminal, X
 } from "lucide-react";
 
-type Tab = "overview" | "alerts" | "events" | "integrity";
+type Tab = "overview" | "alerts" | "events" | "sensors" | "integrity";
 type Overview = {events: number; alerts: number; high_alerts: number; assets: number; mode: string; defensive_enforcement: string};
 type Alert = {id: string; severity: string; title: string; explanation: string; asset_id: string; source_ip: string | null; state: string; rule_id: string; evidence_count: number; created_at: string};
 type Event = {id: string; asset_id: string; sensor_id: string; category: string; action: string; source_ip: string | null; observed_at: string};
 type Audit = {valid: boolean; records: number; assurance: string};
 type Identity = {operator_id: string; role: "viewer" | "analyst" | "admin"; capabilities: {triage: boolean; audit_integrity: boolean}};
 type Decision = {id: number; previous_state: string; new_state: string; reason: string; actor: string; decided_at: string};
+type SensorCoverage = {stale_after_seconds:number; assurance:string; sensors: {sensor_id:string; asset_id:string|null;status:"healthy"|"stale"|"never_seen";last_seen_at:string|null;last_event_at:string|null;heartbeat_count:number;event_count:number}[]};
 type Evidence = {event_id: string; sensor_id: string; action: string; asset_id: string; source_ip: string | null; observed_at: string};
 
 const API = process.env.NEXT_PUBLIC_SENTINEL_API_BASE || "http://127.0.0.1:8000";
@@ -22,6 +23,7 @@ const nav: {id: Tab; text: string; Icon: typeof Activity}[] = [
   {id: "overview", text: "Overview", Icon: BarChart3},
   {id: "alerts", text: "Investigations", Icon: ShieldAlert},
   {id: "events", text: "Event intelligence", Icon: Activity},
+  {id: "sensors", text: "Sensor coverage", Icon: Radio},
   {id: "integrity", text: "Evidence integrity", Icon: Fingerprint},
 ];
 const formatDate = (value: string) => {
@@ -49,6 +51,7 @@ export default function CommandCenter() {
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [events, setEvents] = useState<Event[]>([]);
   const [audit, setAudit] = useState<Audit | null>(null);
+  const [coverage, setCoverage] = useState<SensorCoverage | null>(null);
   const [selected, setSelected] = useState<string | null>(null);
   const [evidence, setEvidence] = useState<Evidence[] | null>(null);
   const [decisions, setDecisions] = useState<Decision[]>([]);
@@ -67,17 +70,18 @@ export default function CommandCenter() {
     setBusy(true);
     try {
       const user = await request<Identity>("session", key);
-      const [o, a, e, i] = await Promise.all([
+      const [o, a, e, i, c] = await Promise.all([
         request<Overview>("overview", key), request<Alert[]>("alerts", key),
         request<Event[]>("events", key), user.capabilities.audit_integrity ? request<Audit>("audit/integrity", key) : Promise.resolve(null),
+        request<SensorCoverage>("sensors", key),
       ]);
-      setIdentity(user); setOverview(o); setAlerts(a); setEvents(e); setAudit(i); setLastSync(new Date()); setError("");
+      setIdentity(user); setOverview(o); setAlerts(a); setEvents(e); setAudit(i); setCoverage(c); setLastSync(new Date()); setError("");
       return true;
     } catch (e) {
       if (e instanceof Error && e.message === "Invalid operator credential") {
         // A revoked or changed identity must not leave previously loaded telemetry visible.
         setToken(""); setIdentity(null); setOverview(null); setAlerts([]); setEvents([]);
-        setAudit(null); setSelected(null); setEvidence(null); setDecisions([]);
+        setAudit(null); setCoverage(null); setSelected(null); setEvidence(null); setDecisions([]);
         setActive("overview"); setLastSync(null);
       }
       setError(e instanceof Error ? e.message : "Cannot reach the API");
@@ -98,7 +102,7 @@ export default function CommandCenter() {
     if (valid) { setToken(entry); setEntry(""); }
   }
   function signOut() {
-    setToken(""); setEntry(""); setIdentity(null); setActive("overview"); setOverview(null); setAlerts([]); setEvents([]); setAudit(null);
+    setToken(""); setEntry(""); setIdentity(null); setActive("overview"); setOverview(null); setAlerts([]); setEvents([]); setAudit(null); setCoverage(null);
     setSelected(null); setEvidence(null); setDecisions([]); setTriageReason(""); setLastSync(null); setError("");
   }
   async function inspect(alertId: string) {
@@ -151,7 +155,7 @@ export default function CommandCenter() {
     </aside>
     {sidebar && <button aria-label="Close navigation" className="mobile-overlay" onClick={()=>setSidebar(false)}/>}
     <div className="app-main"><header className="topbar"><div className="topbar-left"><button className="mobile-menu iconbtn" onClick={()=>setSidebar(!sidebar)} aria-label="Toggle navigation">{sidebar?<X size={20}/>:<Menu size={20}/>}</button><span className="topbar-breadcrumb">SENTINEL</span><ChevronRight size={13}/><span className="topbar-current">{nav.find(n=>n.id===active)?.text}</span></div><div className="topbar-right"><span className="workspace-pill"><span className="live-dot"/> LOCAL SYSTEM</span><button className="iconbtn" aria-label="Refresh telemetry" title="Refresh telemetry" disabled={busy} onClick={()=>void refresh(token)}><RefreshCcw size={17} className={busy?"spin":""}/></button><span className="operator-monogram" title={`${identity?.operator_id ?? "Operator"} · ${identity?.role ?? "unknown"}`}>{identity?.operator_id.slice(0,2).toUpperCase() || "OP"}</span></div></header>
-      <div className="content"><div className="page-heading"><div><div className="eyebrow app-eyebrow"><span className="eyebrowline"/> SECURITY OPERATIONS / LOCAL ENVIRONMENT</div><h1>{active==="overview"?"Intelligence overview":active==="alerts"?"Incident investigations":active==="events"?"Event intelligence":"Evidence integrity"}</h1><p>{active==="overview"?"A precise operational view of observed activity and verified detections.":active==="alerts"?"Deterministic findings supported by traceable event evidence.":active==="events"?"Validated event records received from authenticated sensors.":"Review the integrity of the local audit chain."}</p></div><div className="heading-actions"><span className="update-label"><Clock3 size={14}/>{lastSync ? `Updated ${lastSync.toLocaleTimeString()}`:"No sync"}</span><button className="outline-btn" onClick={()=>void refresh(token)} disabled={busy}><RefreshCcw size={15} className={busy?"spin":""}/> Refresh</button></div></div>
+      <div className="content"><div className="page-heading"><div><div className="eyebrow app-eyebrow"><span className="eyebrowline"/> SECURITY OPERATIONS / LOCAL ENVIRONMENT</div><h1>{active==="overview"?"Intelligence overview":active==="alerts"?"Incident investigations":active==="events"?"Event intelligence":active==="sensors"?"Sensor coverage":"Evidence integrity"}</h1><p>{active==="overview"?"A precise operational view of observed activity and verified detections.":active==="alerts"?"Deterministic findings supported by traceable event evidence.":active==="events"?"Validated event records received from authenticated sensors.":active==="sensors"?"Check authenticated sensor connectivity, missing enrollment and stale reporting gaps.":"Review the integrity of the local audit chain."}</p></div><div className="heading-actions"><span className="update-label"><Clock3 size={14}/>{lastSync ? `Updated ${lastSync.toLocaleTimeString()}`:"No sync"}</span><button className="outline-btn" onClick={()=>void refresh(token)} disabled={busy}><RefreshCcw size={15} className={busy?"spin":""}/> Refresh</button></div></div>
       {error && <div role="alert" className="error-banner"><CircleAlert size={16}/><span>{error}</span><button onClick={()=>setError("")} aria-label="Dismiss error"><X size={15}/></button></div>}
       {active==="overview" && <>
         <div className="metric-grid">{[
@@ -172,8 +176,9 @@ export default function CommandCenter() {
         <div className="triage-history"><div className="kicker">DECISION HISTORY</div>{decisions.length ? decisions.map(item=><div className="triage-history-item" key={item.id}><strong>{item.previous_state} → {item.new_state}</strong><span>{formatDate(item.decided_at)} · {item.actor}</span><p>{item.reason}</p></div>):<p>No previous decisions recorded.</p>}</div></div>
         </div>}</section>}
       {active==="events" && <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">SENSOR RECORDS</div><h2>Validated event stream <span className="count">{events.length}</span></h2></div><div className="small-tag"><Radio size={14}/> HMAC SIGNED</div></div>{events.length===0?<Empty title="No events received" detail="The ingestion API has not accepted any security events yet."/>:<div className="table-scroll"><table><thead><tr><th>Observed</th><th>Asset</th><th>Action</th><th>Source IP</th><th>Sensor</th></tr></thead><tbody>{events.map(event=><tr key={event.id}><td className="mono subtle">{formatDate(event.observed_at)}</td><td>{event.asset_id}</td><td><span className="action-dot"/>{actionName(event.action)}</td><td className="mono">{event.source_ip||"—"}</td><td className="subtle">{event.sensor_id}</td></tr>)}</tbody></table></div>}</section>}
+      {active==="sensors" && <section className="surface table-surface"><div className="surface-head"><div><div className="kicker">OBSERVABILITY COVERAGE</div><h2>Enrolled sensors <span className="count">{coverage?.sensors.length ?? 0}</span></h2></div><div className="small-tag"><Radio size={14}/> SIGNED CONTACT</div></div><p className="surface-sub">Status is based on server-received signed contact, not on device integrity. A sensor becomes stale after {coverage?.stale_after_seconds ?? "—"} seconds without contact.</p>{!coverage?.sensors.length?<Empty title="No configured sensors" detail="Configure sensor credentials before using this view."/>:<div className="table-scroll"><table><thead><tr><th>Sensor ID</th><th>Asset last reported</th><th>Status</th><th>Last verified contact</th><th>Heartbeats</th><th>Events</th></tr></thead><tbody>{coverage.sensors.map(sensor=><tr key={sensor.sensor_id}><td className="mono">{sensor.sensor_id}</td><td>{sensor.asset_id??"Not reported"}</td><td><strong className={sensor.status==="healthy"?"neutral-label":"warning-label"}>{sensor.status.replaceAll("_"," ").toUpperCase()}</strong></td><td className="mono subtle">{sensor.last_seen_at?formatDate(sensor.last_seen_at):"Never"}</td><td>{sensor.heartbeat_count}</td><td>{sensor.event_count}</td></tr>)}</tbody></table></div>}<p className="surface-sub">{coverage?.assurance}</p></section>}
       {active==="integrity" && <section className="surface integrity-surface"><div className="integrity-hero"><div className={`integrity-icon ${audit?.valid ? "verified":"unverified"}`}><Fingerprint size={35}/></div><div><div className="kicker">AUDIT VERIFICATION</div><h2>{audit?.valid?"Local chain verified":"Integrity verification failed"}</h2><p>{audit?.valid?"Recorded audit entries match the configured signing key and expected link sequence.":"Review audit storage and signing keys. Treat existing evidence as potentially untrusted."}</p></div></div><div className="integrity-stats"><div><span>AUDIT RECORDS</span><strong>{audit?.records ?? "—"}</strong></div><div><span>INTEGRITY CHECK</span><strong>{audit?.valid ? "PASS" : "FAIL"}</strong></div><div><span>ASSURANCE</span><strong>LOCAL HMAC</strong></div></div><div className="integrity-caveat"><CircleAlert size={18}/>HMAC chaining detects edits when the key and complete chain remain trustworthy. It is not immutable storage and cannot independently prove that records were not deleted or replaced.</div></section>}
-      <footer className="footer"><div>SENTINEL SECURITY OPERATIONS <span>/</span> VERSION 0.4.0</div><div>PRIVATE BY DEFAULT <span className="footer-separator">·</span> NO ACTIVE RESPONSE</div></footer></div>
+      <footer className="footer"><div>SENTINEL SECURITY OPERATIONS <span>/</span> VERSION 0.9.0</div><div>PRIVATE BY DEFAULT <span className="footer-separator">·</span> NO ACTIVE RESPONSE</div></footer></div>
     </div>
   </div>;
 }

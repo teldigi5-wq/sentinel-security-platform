@@ -190,23 +190,26 @@ def process_file(*, source: Path, state_path: Path, asset_id: str, sensor_key: s
         return seen, sent
 
 
-def send_signed(*, raw: bytes, nonce: str, sensor_id: str, sensor_key: str, host: str, port: int) -> None:
+def send_signed(*, raw: bytes, nonce: str, sensor_id: str, sensor_key: str, host: str, port: int,
+                route: str = "/api/v1/events") -> None:
     # Literal loopback only; no environment proxies, DNS, or HTTP redirects.
     if host not in {"127.0.0.1", "::1"} or not (1 <= port <= 65535):
         raise CollectorError("Collector may send only to literal loopback")
+    if route not in ("/api/v1/events", "/api/v1/sensors/heartbeat"):
+        raise CollectorError("Unapproved sensor destination")
     stamp = str(int(time.time()))
     canonical = f"{sensor_id}\n{stamp}\n{nonce}\n{hashlib.sha256(raw).hexdigest()}".encode()
     signature = hmac.new(sensor_key.encode(), canonical, hashlib.sha256).hexdigest()
     connection = http.client.HTTPConnection(host, port, timeout=8)
     try:
-        connection.request("POST", "/api/v1/events", body=raw, headers={
+        connection.request("POST", route, body=raw, headers={
             "Content-Type": "application/json", "X-Sentinel-Sensor": sensor_id,
             "X-Sentinel-Timestamp": stamp, "X-Sentinel-Nonce": nonce,
             "X-Sentinel-Signature": signature,
         })
         response = connection.getresponse()
         response.read(1024)
-        if response.status not in (202, 409):
+        if response.status != 202 and not (route == "/api/v1/events" and response.status == 409):
             raise CollectorError(f"Ingestion rejected record (HTTP {response.status})")
     except (OSError, http.client.HTTPException) as exc:
         raise CollectorError("Local ingestion connection failed") from exc
@@ -224,16 +227,19 @@ def main() -> int:
     parser.add_argument("--follow", action="store_true", help="Continue polling; default runs once")
     parser.add_argument("--backfill", action="store_true", help="Opt in to historical records on first run; may create misleading bursts")
     parser.add_argument("--interval", type=float, default=5.0)
+    parser.add_argument("--heartbeat-seconds", type=int, default=60,
+                        help="Signed health report cadence (30-120 seconds when --follow)")
     args = parser.parse_args()
     if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", args.sensor):
         parser.error("Invalid sensor identifier")
-    if not 1 <= args.interval <= 60 or not 1 <= args.port <= 65535:
+    if not 1 <= args.interval <= 60 or not 1 <= args.port <= 65535 or not 30 <= args.heartbeat_seconds <= 120:
         parser.error("Port and interval must be within safe bounds")
     try:
         config = json.loads(os.environ.get("SENTINEL_SENSOR_KEYS", "{}"))
         secret = config.get(args.sensor) if isinstance(config, dict) else None
         if not isinstance(secret, str) or len(secret) < 32:
             raise CollectorError("Configured sensor secret is missing")
+        last_heartbeat = -float("inf")
         while True:
             count, accepted = process_file(
                 source=args.source, state_path=args.state, asset_id=args.asset,
@@ -241,6 +247,12 @@ def main() -> int:
                 send=lambda raw, nonce: send_signed(
                     raw=raw, nonce=nonce, sensor_id=args.sensor, sensor_key=secret,
                     host="127.0.0.1", port=args.port))
+            if time.monotonic() - last_heartbeat >= args.heartbeat_seconds:
+                heartbeat = json.dumps({"asset_id": args.asset}, separators=(",", ":")).encode()
+                send_signed(raw=heartbeat, nonce=secrets.token_hex(16), sensor_id=args.sensor,
+                            sensor_key=secret, host="127.0.0.1", port=args.port,
+                            route="/api/v1/sensors/heartbeat")
+                last_heartbeat = time.monotonic()
             print(f"inspected={count} normalized_auth_failures={accepted}", flush=True)
             if not args.follow:
                 return 0

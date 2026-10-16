@@ -100,3 +100,14 @@ class OperatorCredential(Base):
     expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     __table_args__ = (Index("idx_operator_credentials_operator", "operator_id"),)
+
+
+class SensorStatus(Base):
+    """Server-observed coverage signals, not assertions of device integrity."""
+    __tablename__ = "sensor_status"
+    sensor_id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    asset_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    last_event_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    event_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    heartbeat_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)

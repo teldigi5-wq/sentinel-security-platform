@@ -8,7 +8,7 @@ from sqlalchemy import create_engine, select, func
 from sqlalchemy.orm import Session
 from sentinel.app import create_app
 from sentinel.database import migrate, verify_schema
-from sentinel.models import Alert, AuditHead, AuditRecord, SecurityEvent
+from sentinel.models import Alert, AuditHead, AuditRecord, SecurityEvent, SensorStatus
 from test_api import OP, KEY, AUDIT, auth, post_event
 from sentinel.settings import Settings
 
@@ -40,18 +40,39 @@ def test_postgres_versioned_schema_and_concurrent_writers():
 
 
 @pytest.mark.skipif(not URL, reason="PostgreSQL service only in dedicated CI job")
-def test_postgres_live_credential_rotation(tmp_path):
-    from sentinel.credential_lifecycle import create_or_rotate
+def test_postgres_live_credential_revocation_and_rotation(tmp_path):
+    """No mocks: the real PostgreSQL database evaluates current credential state per request."""
+    from sentinel.credential_lifecycle import create_or_rotate, revoke_credential
+    from sentinel.settings import Settings
     migrate(URL)
-    file=tmp_path/"postgres-admin.secret"
-    admin_id=create_or_rotate(URL,AUDIT,operator_id="postgres-admin",role="admin",valid_days=7,secret_file=file)
-    prior=file.read_text().strip()
-    cfg=Settings(database_url=URL,operator_token="",audit_key=AUDIT,
-                 sensor_keys={"lab-one":KEY},frontend_origins=("http://localhost:3000",),auth_mode="database")
-    client=TestClient(create_app(cfg))
-    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+prior}).status_code==200
-    new_file=tmp_path/"postgres-new.secret"
-    create_or_rotate(URL,AUDIT,operator_id="postgres-admin",role=None,previous_id=admin_id,
-                     valid_days=30,secret_file=new_file)
-    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+prior}).status_code==401
-    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+new_file.read_text().strip()}).status_code==200
+    secret = tmp_path / "postgres-admin.secret"
+    admin_id = create_or_rotate(URL, AUDIT, operator_id="postgres-admin", role="admin",
+                                valid_days=7, secret_file=secret)
+    token = secret.read_text().strip()
+    db_settings = Settings(database_url=URL, operator_token="", audit_key=AUDIT,
+                           sensor_keys={"lab-one": KEY}, frontend_origins=("http://localhost:3000",),
+                           auth_mode="database")
+    client = TestClient(create_app(db_settings))
+    assert client.get("/api/v1/session", headers={"Authorization": "Bearer " + token}).status_code == 200
+    rotated_file = tmp_path / "postgres-rotated.secret"
+    create_or_rotate(URL, AUDIT, operator_id="postgres-admin", role=None,
+                     previous_id=admin_id, valid_days=14, secret_file=rotated_file)
+    assert client.get("/api/v1/session", headers={"Authorization": "Bearer " + token}).status_code == 401
+    assert client.get("/api/v1/session", headers={"Authorization": "Bearer " + rotated_file.read_text().strip()}).status_code == 200
+
+
+@pytest.mark.skipif(not URL, reason="PostgreSQL service only in dedicated CI job")
+def test_postgres_sensor_heartbeat_and_atomic_event_count():
+    from test_sensor_health import beat
+    migrate(URL)
+    app = create_app(Settings(database_url=URL, operator_token=OP, audit_key=AUDIT,
+        sensor_keys={"lab-one": KEY}, frontend_origins=("http://localhost:3000",)))
+    client = TestClient(app)
+    result = beat(client)
+    assert result.status_code == 202, result.text
+    health = client.get("/api/v1/sensors", headers=auth()).json()['sensors'][0]
+    assert health['status'] == 'healthy' and health['heartbeat_count'] >= 1
+    engine = create_engine(URL)
+    with Session(engine) as session:
+        assert session.get(SensorStatus, 'lab-one').heartbeat_count >= 1
+    engine.dispose()

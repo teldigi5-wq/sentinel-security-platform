@@ -18,8 +18,8 @@ from sqlalchemy.orm import Session, sessionmaker
 from .audit import append_audit, decision_digest, lock_audit_head, verify_case_decisions, verify_chain
 from .detection import evaluate
 from .database import verify_schema
-from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, OperatorCredential, utcnow
-from .schemas import IncomingEvent, TriageRequest
+from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
+from .schemas import IncomingEvent, TriageRequest, SensorHeartbeat
 from .settings import OperatorIdentity, Settings, load_settings
 
 def as_utc_iso(value: datetime) -> str:
@@ -31,6 +31,36 @@ def as_utc_iso(value: datetime) -> str:
 
 MAX_BODY_BYTES = 8192
 MAX_CLOCK_SKEW_SECONDS = 120
+SENSOR_STALE_SECONDS = 180
+
+def sensor_state(last_seen: datetime | None, now: datetime) -> str:
+    if last_seen is None:
+        return "never_seen"
+    if last_seen.tzinfo is None:
+        last_seen = last_seen.replace(tzinfo=timezone.utc)
+    age = (now - last_seen).total_seconds()
+    # A future timestamp cannot certify health; server clock corruption is a gap.
+    return "healthy" if 0 <= age <= SENSOR_STALE_SECONDS else "stale"
+
+def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, heartbeat: bool) -> None:
+    # Called only after HMAC verification, within the audit-writer transaction.
+    now = utcnow()
+    status = session.get(SensorStatus, sensor_id)
+    if status is None:
+        status = SensorStatus(sensor_id=sensor_id, asset_id=asset_id, last_seen_at=now,
+                              last_event_at=None if heartbeat else now,
+                              event_count=0 if heartbeat else 1,
+                              heartbeat_count=1 if heartbeat else 0)
+        session.add(status)
+    else:
+        status.asset_id = asset_id
+        status.last_seen_at = now
+        if heartbeat:
+            status.heartbeat_count += 1
+        else:
+            status.last_event_at = now
+            status.event_count += 1
+
 
 
 def create_app(settings: Settings | None = None) -> FastAPI:
@@ -57,6 +87,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         raise
 
     if settings.auth_mode == "database":
+        # Deny startup with no active administrator, never fall back to static auth.
         with session_factory() as preflight:
             active_admin = preflight.scalar(select(OperatorCredential.id).where(
                 OperatorCredential.role == "admin",
@@ -72,7 +103,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         yield
         engine.dispose()
 
-    app = FastAPI(title="Sentinel Security Core", version="0.7.0", docs_url=None, redoc_url=None,
+    app = FastAPI(title="Sentinel Security Core", version="0.9.0", docs_url=None, redoc_url=None,
                   openapi_url=None, lifespan=lifespan)
     app.add_middleware(CORSMiddleware, allow_origins=list(settings.frontend_origins),
                        allow_credentials=False, allow_methods=["GET", "POST"], allow_headers=["Authorization", "Content-Type"])
@@ -140,8 +171,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def health():
         return {"status": "ok", "service": "sentinel-core"}
 
-    @app.post("/api/v1/events", status_code=202)
-    async def ingest(request: Request, session: DB):
+    async def authenticated_sensor(request: Request, session: Session) -> tuple[str, str, bytearray]:
+        """Authenticate signed POSTs with the same nonce replay domain for both routes."""
         sensor_id = request.headers.get("X-Sentinel-Sensor", "")
         timestamp = request.headers.get("X-Sentinel-Timestamp", "")
         nonce = request.headers.get("X-Sentinel-Nonce", "")
@@ -160,6 +191,31 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             raise HTTPException(status_code=401, detail="Invalid sensor authentication")
+        return sensor_id, nonce, raw
+
+    @app.post("/api/v1/sensors/heartbeat", status_code=202)
+    async def heartbeat(request: Request, session: DB):
+        sensor_id, nonce, raw = await authenticated_sensor(request, session)
+        try:
+            body = SensorHeartbeat.model_validate_json(raw)
+        except (ValidationError, ValueError) as exc:
+            raise HTTPException(status_code=422, detail="Invalid sensor heartbeat") from exc
+        try:
+            lock_audit_head(session)
+            session.add(SensorNonce(sensor_id=sensor_id, nonce=nonce))
+            session.flush()
+            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=True)
+            append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
+                         action="sensor.heartbeat", resource=body.asset_id)
+            session.commit()
+        except IntegrityError as exc:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
+        return {"accepted": True}
+
+    @app.post("/api/v1/events", status_code=202)
+    async def ingest(request: Request, session: DB):
+        sensor_id, nonce, raw = await authenticated_sensor(request, session)
         try:
             body = IncomingEvent.model_validate_json(raw)
             body.check_pair()
@@ -174,6 +230,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             lock_audit_head(session)  # Serialize detection + audit across writers.
             session.add(SensorNonce(sensor_id=sensor_id, nonce=nonce))
             session.add(incoming)
+            update_sensor_status(session, sensor_id, body.asset_id, heartbeat=False)
             session.flush()
             alerts = evaluate(session, incoming)
             append_audit(session, settings.audit_key, actor=f"sensor:{sensor_id}",
@@ -185,6 +242,24 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.rollback()
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"event_id": incoming.id, "new_alert_ids": alerts}
+
+    @app.get("/api/v1/sensors")
+    def sensor_coverage(_: Operator, session: DB):
+        """Enumerate configured sensors, even if they have never sent a packet."""
+        now = utcnow()
+        known = {row.sensor_id: row for row in session.scalars(select(SensorStatus)).all()}
+        result = []
+        for sensor_id in sorted(settings.sensor_keys):
+            row = known.get(sensor_id)
+            last_seen = row.last_seen_at if row else None
+            result.append({"sensor_id": sensor_id, "asset_id": row.asset_id if row else None,
+                           "status": sensor_state(last_seen, now),
+                           "last_seen_at": as_utc_iso(last_seen) if last_seen else None,
+                           "last_event_at": as_utc_iso(row.last_event_at) if row and row.last_event_at else None,
+                           "heartbeat_count": row.heartbeat_count if row else 0,
+                           "event_count": row.event_count if row else 0})
+        return {"stale_after_seconds": SENSOR_STALE_SECONDS, "sensors": result,
+                "assurance": "Last accepted signed contact, not host integrity or assured network coverage"}
 
     @app.get("/api/v1/session")
     def operator_session(operator: Operator):
