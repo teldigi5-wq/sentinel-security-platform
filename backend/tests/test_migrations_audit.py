@@ -86,6 +86,11 @@ def make_legacy(path):
     with Session(engine) as s:
         at = datetime.now(timezone.utc)
         resource = "legacy-event-id"
+        # Older authentic records used an ID-only event audit resource; a
+        # corresponding stored event must exist for restart certification.
+        s.add(SecurityEvent(id=resource, sensor_id="lab-one", asset_id="workstation-1",
+                            category="authentication", action="auth_success",
+                            source_ip="192.0.2.11", observed_at=at))
         digest = _digest(AUDIT, _time_key(at), "sensor:lab-one", "event.ingested", resource, "0"*64)
         s.add(AuditRecord(at=at, actor="sensor:lab-one", action="event.ingested",
                           resource=resource, previous_hash="0"*64, entry_hash=digest))
