@@ -129,6 +129,11 @@ jobs:
       - name: Production compilation
         working-directory: frontend
         run: npm run build
+      - name: Chromium production-dashboard smoke tests (synthetic localhost API)
+        working-directory: frontend
+        env:
+          NEXT_TELEMETRY_DISABLED: '1'
+        run: node scripts/browser-smoke.mjs
       # Audits the complete locked frontend tree, including build dependencies.
       - name: Audit frontend dependency lock (block high/critical advisories)
         working-directory: frontend
