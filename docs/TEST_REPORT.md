@@ -82,3 +82,8 @@ The optional `test_postgres_integration.py` requires a real ephemeral PostgreSQL
 Added \`backend/tests/test_backup_recovery.py\` to exercise backup/restore round trips, signed manifest verification, wrong-key rejection, checksum tampering, malformed schema, altered audit rows, symlinked snapshot rejection, private permissions, refusal to overwrite existing databases and snapshot verification despite later source changes.
 
 Local results: 54 backend tests passed; one PostgreSQL-only test skipped locally by design pending the dedicated PostgreSQL GitHub CI job. Real crash-consistency drills, forced power-loss tests, off-host encrypted backup storage and recovery objectives remain unverified.
+
+
+## v0.7 — operator credential lifecycle
+
+Local tests exercised the v0.7 Alembic migration, active-admin fail-closed startup, non-bypassable database authentication, viewer/admin RBAC, immediate server-side revocation, 90-day validity limit, role-preserving rotation, wrong-key audit rejection and private token output. Previous backend regressions remain enabled. A separate PostgreSQL CI test now validates live rotation against an ephemeral service. Remote CI success must be verified on the specific v0.7 commit; localhost testing is **not** evidence of safe public access or MFA/SSO qualification.

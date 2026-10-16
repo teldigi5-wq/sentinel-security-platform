@@ -80,7 +80,7 @@ def make_legacy(path):
     engine = create_engine(f"sqlite:///{path}")
     metadata = MetaData()
     for name, table in Base.metadata.tables.items():
-        if name != "audit_heads":
+        if name not in ("audit_heads", "operator_credentials"):
             table.to_metadata(metadata)
     metadata.create_all(engine)
     with Session(engine) as s:

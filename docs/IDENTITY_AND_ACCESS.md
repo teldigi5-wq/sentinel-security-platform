@@ -1,7 +1,6 @@
-# Operator identity and access — v0.4
+# Operator identity and access — v0.7
 
-Sentinel remains **localhost-only, pre-production**, and has **no MFA, SSO, token expiry,
-per-operator login history, session revocation, brute-force rate limiting, or public access design**.
+Sentinel remains **localhost-only, pre-production**. Legacy/static mode has no automatic expiry or immediate revocation. Optional database mode adds expiry and revocation but neither mode provides MFA, SSO, brute-force rate limiting, or a public access design.
 A bearer token grants its role until removed from the operator mapping. Operators must not
 share credentials. Tokens are high-entropy random secrets, **not human passwords**.
 
@@ -49,3 +48,27 @@ The private operator mapping, audit key, sensor keys and all secrets must be kep
 
 **Before any remote or production access:** add short-lived sessions or OIDC/MFA,
 rate limits, stronger operator audit and secret rotation, authenticated TLS, and penetration-test verification.
+
+
+## Database-backed credentials (opt-in v0.7)
+
+1. Stop the API, take a verified backup, and from `backend/` run `python -m alembic -c alembic.ini upgrade head` with the existing private database URL. Do not discard the audit key.
+2. Provide `SENTINEL_DATABASE_URL` and `SENTINEL_AUDIT_KEY` to the trusted local administrator shell. From `backend/`, run:
+
+```bash
+python scripts/operator_credentials.py enroll security-admin admin --valid-days 30 --token-file /PRIVATE/OUTSIDE-REPO/admin.secret
+```
+
+3. Transfer the new `0600` file's one-time bearer token to a trusted secret manager. Do **not** commit it, screenshot it, or transmit it through logs.
+4. Set `SENTINEL_AUTH_MODE=database` and **unset both** `SENTINEL_OPERATOR_TOKEN` and `SENTINEL_OPERATORS` entirely; leaving even empty values causes startup rejection. Restart the locally bound API.
+5. Inspect only non-secret metadata using `python scripts/operator_credentials.py list`.
+
+Rotate an active credential without changing its role:
+
+```bash
+python scripts/operator_credentials.py rotate security-admin OLD_ID --valid-days 30 --token-file /PRIVATE/OUTSIDE-REPO/new.secret
+```
+
+Immediately revoke a selected credential using `python scripts/operator_credentials.py revoke CREDENTIAL_ID`. Existing sessions using that credential fail at the next request. The last active administrator is protected from accidental revocation. Expiry is checked per request and capped at 90 days. Credentials are not recoverable from hashed database records; a trusted local administrator must issue a replacement.
+
+**Limits:** This is not phishing-resistant MFA or public IAM. Anyone able to modify the database or steal bearer credentials remains a serious risk. Use TLS, MFA/SSO, request throttling, managed recovery and independent security review before exposing any interface remotely.

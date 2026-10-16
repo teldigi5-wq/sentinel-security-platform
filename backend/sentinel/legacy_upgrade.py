@@ -14,7 +14,7 @@ from sqlalchemy import create_engine, inspect, select
 from sqlalchemy.orm import Session
 from .audit import _digest, _time_key, verify_case_decisions
 from .database import alembic_config, migrate
-from .models import AuditHead, AuditRecord, Base
+from .models import AuditHead, AuditRecord, Base, OperatorCredential
 
 
 def upgrade_legacy_sqlite(database_path: Path, backup_path: Path, audit_key: str) -> None:
@@ -33,10 +33,12 @@ def upgrade_legacy_sqlite(database_path: Path, backup_path: Path, audit_key: str
     try:
         with engine.connect() as conn:
             existing_tables = set(inspect(conn).get_table_names())
-            if "alembic_version" in existing_tables or "audit_heads" in existing_tables:
+            if "alembic_version" in existing_tables or "audit_heads" in existing_tables or "operator_credentials" in existing_tables:
                 raise RuntimeError("Already versioned or unknown Sentinel schema")
             differences = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
-            if len(differences) != 1 or differences[0][0] != "add_table" or differences[0][1].name != AuditHead.__tablename__:
+            if (len(differences) != 3 or
+                {diff[1].name for diff in differences if diff[0] == "add_table"} != {AuditHead.__tablename__, OperatorCredential.__tablename__} or
+                {diff[1].name for diff in differences if diff[0] == "add_index"} != {"idx_operator_credentials_operator"}):
                 raise RuntimeError("Legacy schema mismatch; refuse to baseline unknown data")
             with Session(bind=conn) as session:
                 previous = "0" * 64

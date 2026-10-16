@@ -87,3 +87,16 @@ class AuditHead(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     last_hash: Mapped[str] = mapped_column(String(64), nullable=False)
     entry_count: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class OperatorCredential(Base):
+    """Local-administered, independently revocable high-entropy operator tokens."""
+    __tablename__ = "operator_credentials"
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    operator_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    role: Mapped[str] = mapped_column(String(12), nullable=False)
+    token_sha256: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    __table_args__ = (Index("idx_operator_credentials_operator", "operator_id"),)

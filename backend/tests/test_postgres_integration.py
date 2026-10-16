@@ -37,3 +37,21 @@ def test_postgres_versioned_schema_and_concurrent_writers():
         assert session.scalar(select(func.count()).select_from(SecurityEvent)) == 12
         assert session.get(AuditHead, 1).entry_count == session.scalar(select(func.count()).select_from(AuditRecord))
     engine.dispose()
+
+
+@pytest.mark.skipif(not URL, reason="PostgreSQL service only in dedicated CI job")
+def test_postgres_live_credential_rotation(tmp_path):
+    from sentinel.credential_lifecycle import create_or_rotate
+    migrate(URL)
+    file=tmp_path/"postgres-admin.secret"
+    admin_id=create_or_rotate(URL,AUDIT,operator_id="postgres-admin",role="admin",valid_days=7,secret_file=file)
+    prior=file.read_text().strip()
+    cfg=Settings(database_url=URL,operator_token="",audit_key=AUDIT,
+                 sensor_keys={"lab-one":KEY},frontend_origins=("http://localhost:3000",),auth_mode="database")
+    client=TestClient(create_app(cfg))
+    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+prior}).status_code==200
+    new_file=tmp_path/"postgres-new.secret"
+    create_or_rotate(URL,AUDIT,operator_id="postgres-admin",role=None,previous_id=admin_id,
+                     valid_days=30,secret_file=new_file)
+    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+prior}).status_code==401
+    assert client.get("/api/v1/session",headers={"Authorization":"Bearer "+new_file.read_text().strip()}).status_code==200
