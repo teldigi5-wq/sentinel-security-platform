@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, sessionmaker
 from .audit import append_audit, alert_digest, decision_digest, event_digest, lock_audit_head, verify_alert_evidence, verify_case_decisions, verify_chain, verify_event_evidence
 from .detection import evaluate
+from .integrity_scan_guard import IntegrityScanGuard, IntegrityScanBusy, IntegrityScanRateLimited
 from .database import verify_schema
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
 from .schemas import IncomingEvent, TriageRequest, SensorHeartbeat
@@ -395,7 +396,9 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         session.commit()
         return {"alert_id": alert_id, "state": instruction.new_state, "decision_id": decision.id}
 
-    def read_integrity_snapshot() -> dict:
+    integrity_scan_guard = IntegrityScanGuard()
+
+    def _read_integrity_snapshot_raw() -> dict:
         """Recheck *current* data using a stable, read-only transaction.
 
         Authentication occurs in the route dependencies. This intentionally
@@ -423,6 +426,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except Exception as exc:
             # Never return DB internals, SQL text, a secret or a false green.
             raise HTTPException(status_code=503, detail="Integrity state unavailable") from exc
+
+    def read_integrity_snapshot() -> dict:
+        """Bound the cost of authenticated full-history verification requests."""
+        try:
+            with integrity_scan_guard.permit():
+                return _read_integrity_snapshot_raw()
+        except IntegrityScanBusy as exc:
+            raise HTTPException(status_code=429, detail="Integrity verification busy",
+                                headers={"Retry-After": "2"}) from exc
+        except IntegrityScanRateLimited as exc:
+            raise HTTPException(status_code=429, detail="Integrity verification rate limited",
+                                headers={"Retry-After": "60"}) from exc
 
     @app.get("/api/v1/audit/status")
     def audit_status(_: Operator):
