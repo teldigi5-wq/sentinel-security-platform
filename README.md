@@ -296,3 +296,11 @@ report contains only aggregate counts; exit codes distinguish **healthy (0)**,
 **coverage gap (2)**, and **unknown / failure (1)**. It does not send alerts,
 modify incident records, or enforce network responses.
 See [operator instructions](docs/OPERATIONAL_COVERAGE_MONITOR.md).
+
+
+## v0.12 — Linux service deployment contract (not real-host certified)
+
+Includes a non-root systemd unit, dedicated private key-file support for the SSH
+collector, and configuration/security regression tests. See
+[Linux Service](docs/LINUX_SERVICE.md). This is a reviewed installation template,
+**not** evidence of a successful production or real-host deployment.
