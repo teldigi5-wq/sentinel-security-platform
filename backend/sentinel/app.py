@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session, sessionmaker
 from .audit import append_audit, verify_chain
 from .detection import evaluate
 from .models import Alert, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, utcnow
+from .rate_limit import SensorIngestLimiter
 from .schemas import IncomingEvent
 from .settings import Settings, load_settings
 
@@ -32,8 +33,9 @@ MAX_BODY_BYTES = 8192
 MAX_CLOCK_SKEW_SECONDS = 120
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *, ingest_limiter: SensorIngestLimiter | None = None) -> FastAPI:
     settings = settings or load_settings()
+    ingest_limiter = ingest_limiter if ingest_limiter is not None else SensorIngestLimiter()
     if not settings.database_url.startswith(("sqlite:", "postgresql+psycopg:")):
         raise RuntimeError("Unsupported database scheme")
     engine = create_engine(settings.database_url, pool_pre_ping=True,
@@ -106,6 +108,11 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             raise HTTPException(status_code=401, detail="Invalid sensor authentication")
+        # Throttle only authenticated sensors: unsigned traffic must not be able
+        # to exhaust legitimate sensor quota by forging X-Sentinel-Sensor.
+        if not ingest_limiter.allow(sensor_id):
+            raise HTTPException(status_code=429, detail="Sensor ingestion rate exceeded",
+                                headers={"Retry-After": "60"})
         try:
             body = IncomingEvent.model_validate_json(raw)
             body.check_pair()
