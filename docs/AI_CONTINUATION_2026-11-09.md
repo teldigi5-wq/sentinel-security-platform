@@ -33,3 +33,9 @@
 ## Related material
 - https://github.com/teldigi5-wq/sentinel-security-platform/pull/48
 - Other README and repo-local docs are authoritative for existing architecture and behavior; do not replace them with this abbreviated index.
+
+## Updated continuation documents
+- [Current roadmap and remaining phases](AI_ROADMAP_2026-11-09.md)
+- [Milestone tracker, tests and risks](AI_MILESTONES_2026-11-09.md)
+
+On draft docs PR #49 only; original project and historical branches remain intact.
