@@ -135,3 +135,14 @@ Only claim features that pass reproducible tests and can be demonstrated from a 
 ## License
 
 **No license has been selected yet.** The author retains rights until a license is chosen. Adding a permissive open-source license should be an explicit repository-owner decision.
+
+## AI/developer continuation — 9 November 2026
+
+[Current status, safe recovery and next milestones](docs/AI_CONTINUATION_2026-11-09.md) are preserved on a review-only documentation branch. This is not release approval.
+
+## AI handoff and milestone index (9 November 2026)
+- [Original safe recovery handoff](docs/AI_CONTINUATION_2026-11-09.md)
+- [Dated next-phase roadmap](docs/AI_ROADMAP_2026-11-09.md)
+- [Milestone and evidence tracker](docs/AI_MILESTONES_2026-11-09.md)
+
+These changes are documentation-only on [draft PR #49](https://github.com/teldigi5-wq/sentinel-security-platform/pull/49); no production or main promotion is implied.
