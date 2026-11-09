@@ -135,3 +135,10 @@ Only claim features that pass reproducible tests and can be demonstrated from a 
 ## License
 
 **No license has been selected yet.** The author retains rights until a license is chosen. Adding a permissive open-source license should be an explicit repository-owner decision.
+
+
+---
+
+## AI recovery and active milestones — 9 November 2026
+
+Read [the GitHub-verified point-in-time project handoff](docs/AI_HANDOFF_2026-11-09.md) before any AI/developer resumes. It records main SHA `1b21a599c3a5`, open review constraints and next distinct work. These documentation changes do not certify production or merge existing security PRs.
