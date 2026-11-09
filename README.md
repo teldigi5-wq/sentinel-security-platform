@@ -135,3 +135,7 @@ Only claim features that pass reproducible tests and can be demonstrated from a 
 ## License
 
 **No license has been selected yet.** The author retains rights until a license is chosen. Adding a permissive open-source license should be an explicit repository-owner decision.
+
+## AI/developer continuation — 9 November 2026
+
+[Current status, safe recovery and next milestones](docs/AI_CONTINUATION_2026-11-09.md) are preserved on a review-only documentation branch. This is not release approval.
