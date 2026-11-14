@@ -87,14 +87,22 @@ function detectChrome(){
 async function connectCDP(profile) {
   const chrome=spawn(detectChrome(),['--headless=new','--no-sandbox','--disable-dev-shm-usage','--disable-gpu',
     '--disable-background-networking','--disable-extensions','--no-first-run','--no-default-browser-check',
-    '--no-proxy-server','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:'ignore'});
+    '--no-proxy-server','--remote-debugging-port=0',`--user-data-dir=${profile}`,'about:blank'],{stdio:['ignore','ignore','pipe']});
+  // Keep only a bounded tail of Chromium stderr for startup diagnostics.
+  let stderrTail='';chrome.stderr.on('data',chunk=>{stderrTail=(stderrTail+chunk).slice(-1500);});
+  const started=Date.now();
   let port=null;
   for(let i=0;i<100;i++){
     if(chrome.exitCode!==null)break;
     try {const text=await readFile(join(profile,'DevToolsActivePort'),'utf8');const value=Number(text.split('\n')[0]);if(value>0&&value<65536){port=value;break;}}catch{}
     await delay(100);
   }
-  if(!port){chrome.kill('SIGKILL');throw new Error('Chromium debugging endpoint unavailable');}
+  if(!port){
+    const exited=chrome.exitCode!==null||chrome.signalCode!==null;
+    const cause=exited?`process exited (code ${chrome.exitCode}, signal ${chrome.signalCode})`:'no DevToolsActivePort before timeout';
+    chrome.kill('SIGKILL');
+    throw new Error(`Chromium debugging endpoint unavailable after ${Date.now()-started}ms: ${cause}; stderr tail: ${stderrTail.replace(/\s+/g,' ').slice(-300)}`);
+  }
   const targets=await (await fetch(`http://127.0.0.1:${port}/json/list`)).json();
   const page=targets.find(t=>t.type==='page'&&t.webSocketDebuggerUrl);
   if(!page){chrome.kill('SIGKILL');throw new Error('Chromium page target unavailable');}
