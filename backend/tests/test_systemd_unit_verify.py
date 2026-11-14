@@ -84,3 +84,40 @@ def test_command_output_contains_no_secret_or_host_claim(capsys):
         assert record['host_certified'] is False
         assert record['service_started'] is False
         assert 'key' not in json.dumps(record).lower() or 'sha256' in record
+
+
+# --- v0.34: systemd 259 / Ubuntu 26.04 runner drift -------------------------
+# The new parser warns about unrelated host units it loads as dependencies.
+# Those must be tolerated ONLY when attributable to another host unit file.
+from sentinel.systemd_unit_verify import _host_only_diagnostics  # noqa: E402
+
+COPY = Path('/tmp/sentinel-unit-parser-x/sentinel-ssh-collector.service')
+HOST_WARNING = ('/usr/lib/systemd/system/walinuxagent.service:21: '
+                'Support for option CPUAccounting= has been removed and it is ignored')
+
+
+def _result(stderr='', stdout='', code=0):
+    return subprocess.CompletedProcess(['systemd-analyze'], code, stdout, stderr)
+
+
+def test_host_unit_warnings_are_counted_not_fatal():
+    assert _host_only_diagnostics(_result(HOST_WARNING + '\n' + HOST_WARNING.replace('walinuxagent', 'xfs_scrub_all')), COPY) == 2
+    assert _host_only_diagnostics(_result(''), COPY) == 0
+
+
+@pytest.mark.parametrize('stderr', [
+    f'{COPY}:20: Unknown key name \'ImaginarySentinelOption\' in section \'Service\', ignoring.',
+    '/usr/lib/systemd/system/sentinel-ssh-collector.service:3: Unknown key, ignoring.',
+    'sentinel-ssh-collector.service: Command /x is not executable: No such file or directory',
+    'Failed to load unit: something unexpected',
+    HOST_WARNING + '\nunclassified trailing line',
+    '/home/runner/evil.service:1: path outside systemd host roots',
+])
+def test_unit_or_unattributable_diagnostics_still_fail_closed(stderr):
+    assert _host_only_diagnostics(_result(stderr), COPY) is None
+
+
+def test_nonzero_exit_or_stdout_fails_even_with_host_only_warnings():
+    assert _host_only_diagnostics(_result(HOST_WARNING, code=1), COPY) is None
+    assert _host_only_diagnostics(_result(HOST_WARNING, stdout='x'), COPY) is None
+    assert _host_only_diagnostics(_result(HOST_WARNING * 200), COPY) is None
