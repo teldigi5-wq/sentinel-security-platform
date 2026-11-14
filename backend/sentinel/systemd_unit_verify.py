@@ -23,11 +23,13 @@ MAX_UNIT_BYTES = 8192
 MAX_TOOL_OUTPUT = 8192
 # systemd >= 259 (Ubuntu 26.04 runners) also parses unrelated host units pulled
 # in as dependencies and warns about THEIR removed options (e.g. CPUAccounting=).
-# Only a diagnostic that names a vendor/host unit file by absolute path under
-# these roots is attributable to the host; everything else fails closed.
+# Only that single, observed warning class is tolerated, and only when it names
+# a vendor/host unit file by absolute path. Any other host diagnostic (unknown
+# key, bad value, missing dependency, ...) still fails closed.
 _HOST_UNIT_DIAGNOSTIC = re.compile(
     r"^(?:/usr/lib/systemd|/lib/systemd|/usr/local/lib/systemd|/etc/systemd|/run/systemd)"
-    r"/[A-Za-z0-9@._/-]+:\d+: [^\n]{1,300}$")
+    r"/[A-Za-z0-9@._/-]{1,200}:\d{1,6}: "
+    r"Support for option [A-Za-z]{1,64}= has been removed and it is ignored$")
 
 
 class UnitSyntaxError(ValueError):

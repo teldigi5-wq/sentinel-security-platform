@@ -61,3 +61,15 @@ class SensorIngestLimiter:
             while len(self._windows) > self.max_sensors:
                 self._windows.popitem(last=False)
             return True
+
+    def refund(self, sensor_id: str) -> None:
+        """Return one unit after a counted request was rejected as a duplicate.
+
+        Closes the concurrent-replay window: two in-flight copies of one signed
+        request can both pass the stored-nonce pre-check, but the database
+        unique constraint rejects one, and that rejection must not cost quota.
+        """
+        with self._lock:
+            timestamps = self._windows.get(sensor_id)
+            if timestamps:
+                timestamps.pop()

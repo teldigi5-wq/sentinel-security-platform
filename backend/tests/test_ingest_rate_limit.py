@@ -130,3 +130,56 @@ def test_default_limit_admits_existing_synthetic_workloads(tmp_path):
     for _ in range(25):
         assert _send(client).status_code == 202
     assert _event_count(client) == 25
+
+
+class _RacingLimiter(SensorIngestLimiter):
+    """Deterministically reproduce the concurrent-replay window.
+
+    After the stored-nonce pre-check has passed for a request, a twin copy of
+    the same signed request commits its nonce first (simulated by a separate
+    connection). The original then loses at the database unique constraint.
+    """
+
+    def __init__(self, db_url, race_nonce, **kw):
+        super().__init__(**kw)
+        self.db_url, self.race_nonce, self.raced = db_url, race_nonce, False
+
+    def allow(self, sensor_id):
+        allowed = super().allow(sensor_id)
+        if allowed and not self.raced:
+            self.raced = True
+            from sqlalchemy import create_engine
+            from sqlalchemy.orm import Session
+            from sentinel.models import SensorNonce
+            engine = create_engine(self.db_url)
+            with Session(engine) as twin:
+                twin.add(SensorNonce(sensor_id=sensor_id, nonce=self.race_nonce))
+                twin.commit()
+            engine.dispose()
+        return allowed
+
+
+@pytest.mark.parametrize("route", ["/api/v1/events", "/api/v1/sensors/heartbeat"])
+def test_concurrent_replay_losing_at_unique_constraint_refunds_quota(tmp_path, route):
+    nonce = secrets.token_hex(16)
+    url = f"sqlite:///{tmp_path / 'bounded-events.db'}"
+    limiter = _RacingLimiter(url, nonce, max_events=2)
+    client = _client(tmp_path, limiter)
+    raw = (json.dumps({"asset_id": "prototype-one"}, separators=(",", ":")).encode()
+           if route.endswith("heartbeat") else None)
+    lost = _send(client, route, raw, nonce=nonce)
+    assert lost.status_code == 409          # lost the race at the unique constraint
+    assert len(limiter._windows["lab-one"]) == 0   # and its quota unit was returned
+    assert _send(client).status_code == 202
+    assert _send(client).status_code == 202
+    assert _send(client).status_code == 429
+
+
+def test_refund_is_bounded_and_ignores_unknown_sensors():
+    limiter = SensorIngestLimiter(max_events=1)
+    limiter.refund("never-seen")
+    assert limiter.allow("a")
+    limiter.refund("a")
+    limiter.refund("a")
+    assert len(limiter._windows["a"]) == 0
+    assert limiter.allow("a") and not limiter.allow("a")

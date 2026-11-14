@@ -24,5 +24,9 @@ genuine sensor's quota. Exceeding it returns HTTP 429 with `Retry-After`.
 
 Limitations: counters are per worker process and reset on restart; this is not a
 distributed quota. Multi-worker or multi-instance deployments still need an
-ingress rate limiter. Two concurrent replays of a not-yet-committed nonce can
-each consume one unit before the unique constraint rejects one of them.
+ingress rate limiter. If concurrent copies of one signed request race past the
+stored-nonce pre-check, the copy rejected by the database unique constraint has
+its quota unit refunded, so concurrent replays cannot drain quota either. The
+default 300/60 s budget, 512-identity bound (least-recently-active eviction,
+reachable only by keyed sensors) and fixed `Retry-After` (window length, an
+upper bound rather than an exact reset time) are local single-process choices.

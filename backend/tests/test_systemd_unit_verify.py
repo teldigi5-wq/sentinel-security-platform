@@ -112,6 +112,11 @@ def test_host_unit_warnings_are_counted_not_fatal():
     'Failed to load unit: something unexpected',
     HOST_WARNING + '\nunclassified trailing line',
     '/home/runner/evil.service:1: path outside systemd host roots',
+    # Host-unit diagnostics OTHER than the verified removed-option class fail.
+    "/usr/lib/systemd/system/walinuxagent.service:9: Unknown key name 'Foo' in section 'Service', ignoring.",
+    '/usr/lib/systemd/system/network.target:3: Failed to parse value, ignoring: x',
+    '/etc/systemd/system/x.service:1: Unit configured to use KillMode=none. This is unsafe',
+    '/usr/lib/systemd/system/a.service:2: Support for option CPUAccounting= has been removed and it is ignored; extra',
 ])
 def test_unit_or_unattributable_diagnostics_still_fail_closed(stderr):
     assert _host_only_diagnostics(_result(stderr), COPY) is None

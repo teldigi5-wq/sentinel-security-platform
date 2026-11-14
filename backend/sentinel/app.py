@@ -256,6 +256,7 @@ def create_app(settings: Settings | None = None, *,
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            ingest_limiter.refund(sensor_id)
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"accepted": True}
 
@@ -298,6 +299,7 @@ def create_app(settings: Settings | None = None, *,
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            ingest_limiter.refund(sensor_id)
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"event_id": incoming.id, "new_alert_ids": alerts}
 

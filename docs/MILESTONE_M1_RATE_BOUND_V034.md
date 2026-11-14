@@ -33,3 +33,14 @@ Root causes of the pre-existing failures (diagnosed with a temporary, now-delete
 Evidence: exact SHA `94eae6e` — all 7 jobs pass on both push and pull_request runs (backend, frontend, postgres, detection-quality, release-candidate-integration, linux-recovery-drill, linux-runtime-observation-fixtures). One intermediate run had a frontend Chromium smoke failure that passed on the parallel run of the same SHA; treat it as possible flakiness to watch, not resolved.
 
 Status: coded · exact-SHA CI verified · NOT merged · NOT deployed · NOT owner accepted.
+
+## Update 2026-11-14 (2) — M1 review follow-ups (external review via owner)
+
+| Finding | Decision | Change |
+|---|---|---|
+| systemd host-diagnostic regex accepted any message on a host-unit path | Valid | Narrowed to the single observed class `Support for option X= has been removed and it is ignored`; 4 new negative cases (unknown key, parse failure, unsafe KillMode, suffixed message) prove other host diagnostics still fail |
+| Concurrent replays could consume quota before the unique constraint | Valid; fixed rather than accepted | `SensorIngestLimiter.refund()` on the IntegrityError path of both signed routes; deterministic race regression for events and heartbeats |
+| 512-identity LRU bound | Accepted for local use | Eviction reachable only by configured (keyed) sensors; evicting one only resets that sensor's window |
+| `Retry-After` | Accepted | Window length: a safe upper bound, not an exact reset time |
+| "All PRs #2–#47 will fail CI" | My overstatement | Their checks are from October and were not re-run; only #47 was re-observed failing. No historical PR is being repaired individually |
+| PR #51 as release candidate | Corrected | #51 is a stacked v0.34 draft on the v0.33 branch, **not** a main release candidate. Release remains blocked by issues #35 (real Linux host recovery) and #36 (independent security review) |
