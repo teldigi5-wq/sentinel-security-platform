@@ -19,6 +19,7 @@ from .audit import append_audit, alert_digest, decision_digest, event_digest, lo
 from .detection import evaluate
 from .integrity_scan_guard import IntegrityScanGuard, IntegrityScanBusy, IntegrityScanRateLimited
 from .database import verify_schema
+from .rate_limit import SensorIngestLimiter
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
 from .schemas import IncomingEvent, TriageRequest, SensorHeartbeat
 from .settings import OperatorIdentity, Settings, load_settings
@@ -71,8 +72,10 @@ def update_sensor_status(session: Session, sensor_id: str, asset_id: str, *, hea
 
 
 
-def create_app(settings: Settings | None = None) -> FastAPI:
+def create_app(settings: Settings | None = None, *,
+               ingest_limiter: SensorIngestLimiter | None = None) -> FastAPI:
     settings = settings or load_settings()
+    ingest_limiter = ingest_limiter if ingest_limiter is not None else SensorIngestLimiter()
     if (settings.sensor_assets and (
         set(settings.sensor_assets) != set(settings.sensor_keys)
         or any(not isinstance(asset, str)
@@ -221,6 +224,18 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         expected = hmac.new(secret.encode(), canonical, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(signature, expected):
             raise HTTPException(status_code=401, detail="Invalid sensor authentication")
+        # Reject an already-stored nonce BEFORE counting quota: otherwise one
+        # captured signed request could be replayed inside the clock-skew window
+        # to exhaust the genuine sensor's quota (each replay would still 409).
+        # The unique constraint at insert time remains the authoritative check.
+        if session.scalar(select(SensorNonce.id).where(SensorNonce.sensor_id == sensor_id,
+                                                         SensorNonce.nonce == nonce).limit(1)) is not None:
+            raise HTTPException(status_code=409, detail="Duplicate event nonce")
+        # Throttle only authenticated, non-replayed requests so unsigned traffic
+        # forging X-Sentinel-Sensor cannot exhaust a legitimate sensor's quota.
+        if not ingest_limiter.allow(sensor_id):
+            raise HTTPException(status_code=429, detail="Sensor ingestion rate exceeded",
+                                headers={"Retry-After": str(ingest_limiter.retry_after_seconds)})
         return sensor_id, nonce, raw
 
     @app.post("/api/v1/sensors/heartbeat", status_code=202)
@@ -241,6 +256,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            ingest_limiter.refund(sensor_id)
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"accepted": True}
 
@@ -283,6 +299,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             session.commit()
         except IntegrityError as exc:
             session.rollback()
+            ingest_limiter.refund(sensor_id)
             raise HTTPException(status_code=409, detail="Duplicate event nonce") from exc
         return {"event_id": incoming.id, "new_alert_ids": alerts}
 

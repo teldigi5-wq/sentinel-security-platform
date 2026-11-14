@@ -13,3 +13,20 @@ Use private GitHub vulnerability reporting when enabled on the repository. Never
 - No silent write access to protected production systems.
 - No assertion of independent forensic immutability from a local HMAC chain.
 - Every action that changes network policy will require explicit approved target scope, expiry and rollback in a future controlled release.
+
+## Sensor ingest rate bound (v0.34)
+
+Signed sensor routes (`/api/v1/events`, `/api/v1/sensors/heartbeat`) share an
+in-process per-sensor quota (default 300 requests / 60 s, at most 512 tracked
+sensors). Requests are counted only after HMAC verification **and** after the
+nonce is confirmed unseen, so neither forged nor replayed traffic can exhaust a
+genuine sensor's quota. Exceeding it returns HTTP 429 with `Retry-After`.
+
+Limitations: counters are per worker process and reset on restart; this is not a
+distributed quota. Multi-worker or multi-instance deployments still need an
+ingress rate limiter. If concurrent copies of one signed request race past the
+stored-nonce pre-check, the copy rejected by the database unique constraint has
+its quota unit refunded, so concurrent replays cannot drain quota either. The
+default 300/60 s budget, 512-identity bound (least-recently-active eviction,
+reachable only by keyed sensors) and fixed `Retry-After` (window length, an
+upper bound rather than an exact reset time) are local single-process choices.
