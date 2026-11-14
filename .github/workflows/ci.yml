@@ -38,10 +38,11 @@ jobs:
       - name: Summarize Python advisories in the job log (failures only)
         if: failure()
         run: >-
-          python -c "import json,sys; d=json.load(open(sys.argv[1]));
+          python -c "import json,os,sys; f=sys.argv[1];
+          d=json.load(open(f)) if os.path.exists(f) else {};
           [print(p['name'], p['version'], v['id'], 'fix:', ','.join(v.get('fix_versions') or []) or 'none')
           for p in d.get('dependencies', []) for v in p.get('vulns', [])]"
-          "$GITHUB_WORKSPACE/sentinel-python-vulnerabilities.json" || true
+          "$GITHUB_WORKSPACE/sentinel-python-vulnerabilities.json"
       - name: Retain Python vulnerability evidence (including failures)
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
