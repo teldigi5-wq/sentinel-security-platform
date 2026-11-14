@@ -23,3 +23,13 @@ Date: 2026-11-14 · Branch: `feature/sensor-ingest-rate-bound-v034-20261114` · 
 - **Next milestone (blocks every stacked PR):** fix the systemd verifier drift. Capture the runner's `systemd-analyze verify` output in a private debug run, then adjust the unit (or the reviewed contract) without loosening the fail-closed rule.
 - Close or retarget PR #48 in favour of this PR once CI passes.
 - Remaining roadmap: M2 reproducible browser/a11y run, M3 threat-model & retention review before any live sensor, M4 status wording.
+
+## Update 2026-11-14 — CI restored to green
+
+Root causes of the pre-existing failures (diagnosed with a temporary, now-deleted diagnostic branch):
+1. **systemd drift.** `ubuntu-latest` became Ubuntu 26.04.1 with systemd 259. `systemd-analyze verify` now also warns about *unrelated runner units* (`walinuxagent.service`, `xfs_scrub_all.service`: `CPUAccounting=` removed), exit 0. The Sentinel unit produced no diagnostics. The verifier now ignores only lines that are path-attributed to host unit roots (`/usr/lib/systemd`, `/etc/systemd`, …) and do not mention the unit under test; any other line, stdout, oversize output or non-zero exit still fails closed. The ignored count is recorded as `ignored_host_unit_diagnostics`. 9 new regression cases.
+2. **New Python advisories** in the reviewed constraints: certifi 2026.7.22 (PYSEC-2026-4320) → 2026.10.18; opentelemetry-api 1.45.1 (CVE-2026-126360) → 1.45.2. The CI now prints advisory IDs and fix versions in the job log when the audit fails.
+
+Evidence: exact SHA `94eae6e` — all 7 jobs pass on both push and pull_request runs (backend, frontend, postgres, detection-quality, release-candidate-integration, linux-recovery-drill, linux-runtime-observation-fixtures). One intermediate run had a frontend Chromium smoke failure that passed on the parallel run of the same SHA; treat it as possible flakiness to watch, not resolved.
+
+Status: coded · exact-SHA CI verified · NOT merged · NOT deployed · NOT owner accepted.
