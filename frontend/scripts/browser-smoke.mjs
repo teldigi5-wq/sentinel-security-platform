@@ -114,7 +114,7 @@ async function connectCDP(profile) {
   });
   const evaluate=async expression=>{
     const result=await send('Runtime.evaluate',{expression,awaitPromise:true,returnByValue:true});
-    if(result.exceptionDetails)throw new Error(`Browser assertion failed: ${result.exceptionDetails.text}`);
+    if(result.exceptionDetails){const d=result.exceptionDetails;throw new Error(`Browser assertion failed: ${d.exception?.description||d.text}`);}
     return result.result?.value;
   };
   return {chrome,ws,send,evaluate,close:async()=>{ws.close();if(chrome.exitCode===null){chrome.kill('SIGKILL');await Promise.race([new Promise(resolve=>chrome.once('exit',resolve)),delay(1500)]);}}};
@@ -130,7 +130,8 @@ function loginExpression(token){return `(async()=>{${wait}
   document.querySelector('form').requestSubmit();
   return true;
 })()`;}
-async function phase(name,fn){await fn();console.log(`PASS: ${name}`);}
+let currentStage='startup';
+async function phase(name,fn){currentStage=name;await fn();console.log(`PASS: ${name}`);}
 async function pressKey(browser,key,shift=false){
   const vk={Tab:9,Enter:13,Escape:27}[key];
   const params={key,code:key,windowsVirtualKeyCode:vk,nativeVirtualKeyCode:vk,modifiers:shift?8:0};
@@ -146,9 +147,10 @@ async function exerciseBrowser() {
     if(api)await listen(api,API_PORT);
     next=spawn('npm',['run','start','--','-p','3100','-H','127.0.0.1'],
       {cwd:process.cwd(),env:{...process.env,NEXT_TELEMETRY_DISABLED:'1'},detached:true,stdio:'ignore'});
-    await waitForReady();
+    currentStage='frontend readiness';await waitForReady();
     tmp=await mkdtemp(join(tmpdir(),'sentinel-browser-fixture-'));
-    browser=await connectCDP(tmp);
+    currentStage='chromium connection';browser=await connectCDP(tmp);
+    currentStage='initial navigation';
     await browser.send('Page.enable');await browser.send('Runtime.enable');
     await browser.send('Emulation.setDeviceMetricsOverride',{width:1440,height:900,deviceScaleFactor:1,mobile:false});
     await browser.send('Page.navigate',{url:ORIGIN});await delay(650);
@@ -309,8 +311,10 @@ if(process.argv.includes('--self-test')) {
     if(tmp)await rm(tmp,{recursive:true,force:true,maxRetries:8,retryDelay:100});
   }
 } else {
-  exerciseBrowser().catch(()=>{
-    console.error('FAIL: Chromium dashboard smoke qualification (inspect job results; no production data used)');
+  exerciseBrowser().catch(error=>{
+    // Synthetic localhost data only: the stage and message carry no secrets.
+    const message=String(error?.message??error).replace(/\s+/g,' ').slice(0,400);
+    console.error(`FAIL: Chromium dashboard smoke qualification at stage "${currentStage}": ${message}`);
     process.exitCode=1;
   });
 }
