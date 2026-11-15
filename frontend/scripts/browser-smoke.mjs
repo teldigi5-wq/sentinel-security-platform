@@ -133,6 +133,8 @@ const wait=`async function until(test,reason){for(let i=0;i<100;i++){if(test())r
 function loginExpression(token){return `(async()=>{${wait}
   await until(()=>document.querySelector('#operator-token')&&document.querySelector('form'),'login form missing');
   const input=document.querySelector('#operator-token');
+  // The form ships in static HTML; typing before React hydrates drops the input event (button stays disabled).
+  await until(()=>Object.keys(input).some(k=>k.startsWith('__reactProps$')),'login form not hydrated');
   Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(input,${JSON.stringify(token)});
   input.dispatchEvent(new Event('input',{bubbles:true}));
   await until(()=>!document.querySelector('button[type="submit"]').disabled,'submit button disabled');
