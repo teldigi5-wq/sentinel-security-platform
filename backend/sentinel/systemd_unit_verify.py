@@ -21,6 +21,15 @@ UNIT_RELATIVE = Path("deploy/linux/systemd/sentinel-ssh-collector.service")
 APPROVED_PYTHON = "/opt/sentinel/venv/bin/python"
 MAX_UNIT_BYTES = 8192
 MAX_TOOL_OUTPUT = 8192
+# systemd >= 259 (Ubuntu 26.04 runners) also parses unrelated host units pulled
+# in as dependencies and warns about THEIR removed options (e.g. CPUAccounting=).
+# Only that single, observed warning class is tolerated, and only when it names
+# a vendor/host unit file by absolute path. Any other host diagnostic (unknown
+# key, bad value, missing dependency, ...) still fails closed.
+_HOST_UNIT_DIAGNOSTIC = re.compile(
+    r"^(?:/usr/lib/systemd|/lib/systemd|/usr/local/lib/systemd|/etc/systemd|/run/systemd)"
+    r"/[A-Za-z0-9@._/-]{1,200}:\d{1,6}: "
+    r"Support for option [A-Za-z]{1,64}= has been removed and it is ignored$")
 
 
 class UnitSyntaxError(ValueError):
@@ -82,10 +91,11 @@ def verify_unit(unit_path: Path, *, analyzer: str | None = None,
                                     env={"PATH": "/usr/bin:/bin", "LC_ALL": "C", "LANG": "C"})
         except (subprocess.TimeoutExpired, OSError, ValueError) as exc:
             raise UnitToolUnavailable("systemd parser could not complete") from exc
-    if (result.returncode != 0 or len(result.stdout) > MAX_TOOL_OUTPUT or
-            len(result.stderr) > MAX_TOOL_OUTPUT or result.stdout.strip() or result.stderr.strip()):
+        host_diagnostics = _host_only_diagnostics(result, tmp)
+    if host_diagnostics is None:
         # Critical: systemd-analyze can return 0 while warning that an unknown
-        # or malformed sandbox directive was ignored. Treat ANY output as fail.
+        # or malformed sandbox directive was ignored. Treat ANY output that is
+        # not provably about another host unit as failure.
         # Never echo output: it can contain runner-specific paths.
         raise UnitSyntaxError("systemd rejected or warned about the unit")
     return {"schema": "sentinel-systemd-parser-evidence-v1",
@@ -93,6 +103,27 @@ def verify_unit(unit_path: Path, *, analyzer: str | None = None,
             "syntax_verified": True,
             "reviewed_contract_verified": True,
             "tested_using_temporary_interpreter": True,
+            "ignored_host_unit_diagnostics": host_diagnostics,
             "service_started": False,
             "host_certified": False,
             "scope": "CI-hosted Linux parser; not service execution or host recovery"}
+
+
+def _host_only_diagnostics(result: subprocess.CompletedProcess, unit_copy: Path) -> int | None:
+    """Return the count of ignorable host-unit diagnostics, or None to fail.
+
+    Fails on a non-zero exit, oversized output, stdout, or any stderr line that
+    mentions the unit under test or is not a path-attributed host-unit warning.
+    """
+    if (result.returncode != 0 or result.stdout.strip()
+            or len(result.stdout) > MAX_TOOL_OUTPUT or len(result.stderr) > MAX_TOOL_OUTPUT):
+        return None
+    ignored = 0
+    for line in result.stderr.splitlines():
+        if not line.strip():
+            continue
+        if (str(unit_copy) in line or unit_copy.name in line
+                or not _HOST_UNIT_DIAGNOSTIC.fullmatch(line)):
+            return None
+        ignored += 1
+    return ignored

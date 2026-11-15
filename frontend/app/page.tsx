@@ -10,7 +10,7 @@ import {
 
 type Tab = "overview" | "alerts" | "events" | "sensors" | "integrity";
 type Overview = {events: number; alerts: number; high_alerts: number; assets: number; mode: string; defensive_enforcement: string};
-type Alert = {id: string; severity: string; title: string; explanation: string; asset_id: string; source_ip: string | null; state: string; rule_id: string; evidence_count: number; created_at: string};
+type Alert = {id: string; severity: string; title: string; explanation: string; asset_id: string; source_ip: string | null; state: string; rule_id: string; evidence_count: number; close_tier: string; created_at: string};
 type Event = {id: string; asset_id: string; sensor_id: string; category: string; action: string; source_ip: string | null; observed_at: string};
 type Audit = {valid: boolean; records: number; assurance: string};
 type Identity = {operator_id: string; role: "viewer" | "analyst" | "admin"; capabilities: {triage: boolean; audit_integrity: boolean}};
@@ -161,8 +161,14 @@ export default function CommandCenter() {
         headers: {Authorization: `Bearer ${token}`, "Content-Type": "application/json"},
         body: JSON.stringify({expected_state: alert.state, new_state: next, reason}),
       });
-      if (!response.ok) throw new Error(response.status === 409 ? "Alert changed. Refresh and review its current state." :
-        response.status === 401 ? "Operator credential rejected" : `Triage request returned HTTP ${response.status}`);
+      if (!response.ok) {
+        if (response.status === 403) {
+          const body = await response.json().catch(() => null);
+          throw new Error(typeof body?.detail === "string" ? body.detail : "Insufficient operator tier for this action");
+        }
+        throw new Error(response.status === 409 ? "Alert changed. Refresh and review its current state." :
+          response.status === 401 ? "Operator credential rejected" : `Triage request returned HTTP ${response.status}`);
+      }
       const [history] = await Promise.all([
         request<Decision[]>(`alerts/${encodeURIComponent(alert.id)}/history`, token), refresh(token),
       ]);
@@ -219,5 +225,5 @@ export default function CommandCenter() {
 
 function AlertTable({alerts,onSelect}:{alerts:Alert[];onSelect:(id:string)=>void}) {
   if(!alerts.length)return <Empty title="No findings recorded" detail="There are no confirmed rule matches in the current event history."/>;
-  return <div className="table-scroll"><table><thead><tr><th>Severity</th><th>Finding</th><th>Asset / source</th><th>Observed</th><th>Status</th><th scope="col">Actions</th></tr></thead><tbody>{alerts.map(a=><tr key={a.id}><td><span className={`severity severity-${a.severity}`}><span/>{a.severity}</span></td><td><strong className="finding-name">{a.title}</strong><small className="finding-rule">{a.rule_id}</small></td><td><span>{a.asset_id}</span><small className="finding-rule mono">{a.source_ip||"No IP supplied"}</small></td><td className="subtle mono">{formatDate(a.created_at)}</td><td><span className="state-dot"/> {a.state}</td><td><button title="Review evidence" aria-label={`Review evidence for ${a.title}`} onClick={()=>void onSelect(a.id)} className="row-action"><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></div>;
+  return <div className="table-scroll"><table><thead><tr><th>Severity</th><th>Finding</th><th>Asset / source</th><th>Observed</th><th>Status</th><th scope="col">Actions</th></tr></thead><tbody>{alerts.map(a=><tr key={a.id}><td><span className={`severity severity-${a.severity}`}><span/>{a.severity}</span><small className="finding-rule" title="Minimum operator tier required to close this alert">Closes at {a.close_tier}</small></td><td><strong className="finding-name">{a.title}</strong><small className="finding-rule">{a.rule_id}</small></td><td><span>{a.asset_id}</span><small className="finding-rule mono">{a.source_ip||"No IP supplied"}</small></td><td className="subtle mono">{formatDate(a.created_at)}</td><td><span className="state-dot"/> {a.state}</td><td><button title="Review evidence" aria-label={`Review evidence for ${a.title}`} onClick={()=>void onSelect(a.id)} className="row-action"><ArrowUpRight size={16}/></button></td></tr>)}</tbody></table></div>;
 }
