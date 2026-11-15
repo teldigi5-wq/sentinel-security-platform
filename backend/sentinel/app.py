@@ -20,6 +20,7 @@ from .detection import evaluate
 from .integrity_scan_guard import IntegrityScanGuard, IntegrityScanBusy, IntegrityScanRateLimited
 from .database import verify_schema
 from .rate_limit import SensorIngestLimiter
+from .escalation import operator_tier, required_tier, tier_name, SUPPORTED_TRANSITIONS
 from .models import Alert, AlertDecision, AlertEvidence, AuditRecord, Base, SecurityEvent, SensorNonce, SensorStatus, OperatorCredential, utcnow
 from .schemas import IncomingEvent, TriageRequest, SensorHeartbeat
 from .settings import OperatorIdentity, Settings, load_settings
@@ -174,18 +175,12 @@ def create_app(settings: Settings | None = None, *,
             return OperatorIdentity("operator", "admin", "")
         raise HTTPException(status_code=401, detail="Unauthorized", headers={"WWW-Authenticate": "Bearer"})
 
-    def require_analyst(operator: Annotated[OperatorIdentity, Depends(require_operator)]) -> OperatorIdentity:
-        if operator.role not in ("analyst", "admin"):
-            raise HTTPException(status_code=403, detail="Insufficient role")
-        return operator
-
     def require_admin(operator: Annotated[OperatorIdentity, Depends(require_operator)]) -> OperatorIdentity:
         if operator.role != "admin":
             raise HTTPException(status_code=403, detail="Insufficient role")
         return operator
 
     Operator = Annotated[OperatorIdentity, Depends(require_operator)]
-    Analyst = Annotated[OperatorIdentity, Depends(require_analyst)]
     Admin = Annotated[OperatorIdentity, Depends(require_admin)]
     DB = Annotated[Session, Depends(get_session)]
 
@@ -329,8 +324,11 @@ def create_app(settings: Settings | None = None, *,
 
     @app.get("/api/v1/session")
     def operator_session(operator: Operator):
+        tier = operator_tier(operator.role)
         return {"operator_id": operator.operator_id, "role": operator.role,
+                "tier": tier_name(tier),
                 "capabilities": {"triage": operator.role in ("analyst", "admin"),
+                                 "close_high_severity": tier >= 3,
                                  "audit_integrity": operator.role == "admin"}}
 
     @app.get("/api/v1/overview")
@@ -355,6 +353,7 @@ def create_app(settings: Settings | None = None, *,
         return [{"id": a.id, "severity": a.severity, "title": a.title, "explanation": a.explanation,
                  "asset_id": a.asset_id, "source_ip": a.source_ip, "rule_id": a.rule_id,
                  "state": a.state, "evidence_count": a.evidence_count,
+                 "close_tier": tier_name(required_tier(("investigating", "resolved"), a.severity)),
                  "created_at": as_utc_iso(a.created_at)} for a in rows]
 
     @app.get("/api/v1/alerts/{alert_id}/evidence")
@@ -380,7 +379,7 @@ def create_app(settings: Settings | None = None, *,
                  "reason": row.reason, "decided_at": as_utc_iso(row.decided_at)} for row in decisions]
 
     @app.post("/api/v1/alerts/{alert_id}/transition")
-    async def transition_alert(alert_id: str, request: Request, operator: Analyst, session: DB):
+    async def transition_alert(alert_id: str, request: Request, operator: Operator, session: DB):
         # Explicit streaming limit ensures untrusted reasons cannot create unbounded bodies.
         raw = bytearray()
         async for chunk in request.stream():
@@ -391,9 +390,24 @@ def create_app(settings: Settings | None = None, *,
             instruction = TriageRequest.model_validate_json(raw)
         except ValidationError as exc:
             raise HTTPException(status_code=422, detail="Invalid triage instruction") from exc
-        allowed = {"open": "investigating", "investigating": "resolved", "resolved": "investigating"}
-        if allowed.get(instruction.expected_state) != instruction.new_state:
+        transition = (instruction.expected_state, instruction.new_state)
+        if transition not in SUPPORTED_TRANSITIONS:
             raise HTTPException(status_code=422, detail="Unsupported incident state transition")
+        # Severity (for the close-tier check) cannot change after creation, so reading
+        # it before the conditional update carries no race: the update below is still
+        # the sole authority on whether expected_state matched at write time.
+        current = session.get(Alert, alert_id)
+        if current is None:
+            raise HTTPException(status_code=404, detail="Alert not found")
+        needed = required_tier(transition, current.severity)
+        held = operator_tier(operator.role)
+        if held < needed:
+            # L1/L2/L3 SOC escalation: a tier below the one required for this
+            # action must hand off to a higher tier rather than perform it.
+            verb = ("close this " + current.severity + "-severity alert"
+                    if transition == ("investigating", "resolved") else "perform this triage step")
+            raise HTTPException(status_code=403,
+                                 detail=f"Requires {tier_name(needed)} or higher to {verb}; escalate to that tier")
         lock_audit_head(session)  # Enforce deterministic writer ordering.
         # A state-conditional SQL UPDATE prevents stale-state overwrites.
         changed = session.execute(update(Alert).where(
