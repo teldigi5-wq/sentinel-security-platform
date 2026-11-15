@@ -92,8 +92,9 @@ async function connectCDP(profile) {
   let stderrTail='';chrome.stderr.on('data',chunk=>{stderrTail=(stderrTail+chunk).slice(-1500);});
   const started=Date.now();
   let port=null;
-  for(let i=0;i<100;i++){
-    if(chrome.exitCode!==null)break;
+  // Event-based readiness with a deadline (cold CI runners observed >10s); exits at once if Chromium dies.
+  while(Date.now()-started<45000){
+    if(chrome.exitCode!==null||chrome.signalCode!==null)break;
     try {const text=await readFile(join(profile,'DevToolsActivePort'),'utf8');const value=Number(text.split('\n')[0]);if(value>0&&value<65536){port=value;break;}}catch{}
     await delay(100);
   }

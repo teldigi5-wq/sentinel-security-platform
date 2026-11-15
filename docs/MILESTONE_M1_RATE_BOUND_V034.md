@@ -44,3 +44,6 @@ Status: coded · exact-SHA CI verified · NOT merged · NOT deployed · NOT owne
 | `Retry-After` | Accepted | Window length: a safe upper bound, not an exact reset time |
 | "All PRs #2–#47 will fail CI" | My overstatement | Their checks are from October and were not re-run; only #47 was re-observed failing. No historical PR is being repaired individually |
 | PR #51 as release candidate | Corrected | #51 is a stacked v0.34 draft on the v0.33 branch, **not** a main release candidate. Release remains blocked by issues #35 (real Linux host recovery) and #36 (independent security review) |
+
+## M2 finding — Chromium smoke flake (2026-11-15)
+Reproduced on identical SHA `c79969a` (one frontend run passed, one failed). Failing stage: `chromium connection`; Chromium was alive but wrote no `DevToolsActivePort` within the fixed 10 s budget (cold runner start). Not a crash, not an application defect; dbus stderr lines are unrelated noise. Fix: deadline-based readiness wait (45 s) that still fails immediately on process exit and keeps stage diagnostics. Acceptance still requires repeated green runs on one SHA, not a single pass. Keyboard/focus/Escape/session-reset coverage and automated a11y checks remain open M2 items.
