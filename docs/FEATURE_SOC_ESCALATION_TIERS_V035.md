@@ -54,7 +54,7 @@ it here rather than deciding it unilaterally.
 - Locally tested: **NOT RUN** (no package/network access in the authoring
   environment); new tests were checked by manual trace against
   `detection.py`'s actual severity thresholds, not executed
-- CI on exact SHA: pending push
+- CI on exact SHA `ab4733c`: 14/14 checks green (push + PR, 7 jobs each), including the frontend build, which is also the first real compile check on the hand-written TSX edit.
 - Merged / deployed / owner accepted: **no**
 
 ## Recommended follow-up for the owner
