@@ -1,8 +1,36 @@
 # v0.12 Linux systemd deployment contract (not yet real-host certified)
 
-**Status:** systemd unit and key-loading logic are fixture-tested, but no actual
-Linux service installation, log permissions, reboot recovery, or daemon behavior
-has been verified. Do not advertise this as production hardening certification.
+**Status:** systemd unit and key-loading logic are fixture-tested in CI. One
+owner-operated lab host (WSL2 Ubuntu, single self-run operator, 2026-11-22) has
+installed the unit under a dedicated non-root account, passed the static
+preflight, and passed all four `qualify_linux_recovery` checkpoints (baseline,
+restart, rotation, reboot) with offline verification. That is a lab observation,
+not a certificate: there is no independent reviewer, the rotation was forced and
+the "reboot" was a WSL VM restart, and outage, backup/restore and rollback drills
+remain open (see issue #35, which stays open). Do not advertise this as
+production hardening certification.
+
+## Findings from the first real-host run
+
+These are practical details the fixtures did not surface:
+
+- **systemd must be PID 1.** On WSL2 confirm with `ps -p 1 -o comm=`.
+- **Explicit enrollment is required for a passing baseline.** The qualification
+  tool needs the sensor to be `healthy` *and* `explicit`; set
+  `SENTINEL_SENSOR_ASSETS` (single-quoted JSON in `.env`, or the shell splits it
+  at the space) and use the same asset name the sensor is already pinned to.
+- **Backend `.env` is read only at startup.** After changing operators, sensor
+  keys or enrollment, restart the backend before testing.
+- **The key file must be owned by the service account** (not the installing
+  user), mode `0600`; the collector checks ownership against its own UID.
+- **Use a viewer-role token for the observer**, enrolled through
+  `SENTINEL_OPERATORS`; the qualification tool only calls endpoints that any
+  role may read, and an admin-only endpoint must still return 403 for it.
+- **Stock `logrotate` may skip `auth.log`** where `/var/log` is group-writable
+  (seen on WSL2). A one-off config with `su root syslog` limited to `auth.log`
+  rotated it; do not change production rotation just to pass a drill.
+- **The unit is not enabled at boot** by this procedure; start it manually after
+  a reboot, or enable it as a separate operational decision.
 
 ## Scope and prerequisites
 
